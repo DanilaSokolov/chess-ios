@@ -107,6 +107,45 @@ struct ResetPasswordView: View {
     }
 }
 
+/// An anonymous player adds a login to the account they play with. It stays
+/// the same account, so its game history stays too; the login becomes the
+/// name. The form is the sign-in screen's "New account" one.
+struct AddLoginView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            // Scrolls: on a phone on its side, with the keyboard up, the form
+            // is taller than the sheet.
+            ScrollView {
+                VStack(spacing: 16) {
+                    Text(
+                        "Your account and its game history stay the same; the login becomes your name."
+                    )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    LoginForm(purpose: .addLogin)
+                }
+                .padding(24)
+                .frame(maxWidth: 420)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Create a login")
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
 /// The account's email: set it, confirm it with a code. A confirmed email is
 /// what lets the player reset a forgotten password.
 struct EmailView: View {

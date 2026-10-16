@@ -30,6 +30,8 @@ public final class AccountManager {
     @ObservationIgnored private var accessToken: String?
     @ObservationIgnored private var accessExpires: Date = .distantPast
     @ObservationIgnored private var refreshTask: Task<AuthSession, any Error>?
+    /// Adding a login, while auth is being asked: see `upgrade`.
+    @ObservationIgnored private var upgradeTask: Task<AuthSession, any Error>?
 
     /// An access token this close to expiry is renewed before use, so it does
     /// not expire between being sent and being checked.
@@ -57,6 +59,47 @@ public final class AccountManager {
 
     public func logIn(login: String, password: String) async throws(AuthError) {
         try await start { client throws(AuthError) in try await client.logIn(login: login, password: password) }
+    }
+
+    /// Adds a login to the anonymous account signed in here. The account
+    /// stays the same (its id, and so its game history); it gets the login as
+    /// its name and stops being anonymous.
+    ///
+    /// Not `register`: that one makes a new account, for the sign-in screen.
+    /// This one is only for an anonymous player who is signed in already.
+    ///
+    /// Auth answers with a new session and revokes every older refresh token
+    /// of the account. A renewal racing with the request would spend the old
+    /// token after that and look like a stolen copy, so renewals started
+    /// meanwhile wait for the answer instead (see `validAccessToken`).
+    public func upgrade(login: String, password: String, email: String = "") async throws(AuthError) {
+        if let upgradeTask {  // Asked twice: the first answer decides.
+            _ = try? await upgradeTask.value
+        }
+        // `user` is nil until auth has answered once this launch; then auth decides.
+        if user?.isAnonymous == false { throw .alreadyRegistered }
+        try await authorized { client, token throws(AuthError) in
+            try await self.replaceSession { () async throws(AuthError) -> AuthSession in
+                try await client.register(login: login, password: password, email: email, accessToken: token)
+            }
+        }
+    }
+
+    /// Runs a request whose answer replaces the session, holding back
+    /// renewals until it is in.
+    private func replaceSession(
+        with request: @escaping @Sendable () async throws(AuthError) -> AuthSession
+    ) async throws(AuthError) {
+        // Accepted inside the task (on the main actor, like this method): a
+        // renewal waiting for the task finds the new tokens already in place.
+        let task = Task { () async throws -> AuthSession in
+            let session = try await request()
+            self.accept(session)
+            return session
+        }
+        upgradeTask = task
+        defer { upgradeTask = nil }
+        _ = try await Self.result(of: task)
     }
 
     // MARK: - Email and password reset
@@ -132,6 +175,13 @@ public final class AccountManager {
     /// the server has no accounts or the player has none: play as a guest.
     public func validAccessToken(now: Date = .now) async throws(AuthError) -> String? {
         guard client != nil, hasAccount else { return nil }
+        if let upgradeTask {
+            // Auth is replacing the tokens: once the task is done the new
+            // session is accepted; if adding the login failed, the old tokens
+            // still work.
+            _ = try? await upgradeTask.value
+            guard hasAccount else { return nil }
+        }
         if let accessToken, now.addingTimeInterval(Self.renewalMargin) < accessExpires {
             return accessToken
         }

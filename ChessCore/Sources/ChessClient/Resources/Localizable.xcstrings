@@ -401,6 +401,16 @@
         }
       }
     },
+    "This account already has a login. Sign in with it." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У этого аккаунта уже есть логин. Войдите с ним."
+          }
+        }
+      }
+    },
     "This account is blocked." : {
       "localizations" : {
         "ru" : {

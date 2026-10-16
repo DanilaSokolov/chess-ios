@@ -12,6 +12,8 @@ public func authErrorText(_ error: AuthError) -> String {
         String(localized: "Too many wrong passwords. Try again in \((seconds + 59) / 60) minutes.", bundle: .module)
     case .badResponse:
         String(localized: "The sign-in server sent an answer this app cannot read.", bundle: .module)
+    case .alreadyRegistered:
+        String(localized: "This account already has a login. Sign in with it.", bundle: .module)
     case .refused(let code):
         switch code {
         case "invalid_login":

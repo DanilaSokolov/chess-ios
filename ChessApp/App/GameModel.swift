@@ -125,6 +125,49 @@ final class GameModel {
         await connect()
     }
 
+    /// An anonymous player whose account is on the server, so a login can be
+    /// added to it. Without auth, or before the account exists, there is
+    /// nothing to add it to.
+    var canAddLogin: Bool {
+        settings.account == .anonymous && accounts.client != nil && accounts.hasAccount
+            && accounts.user?.isAnonymous != false
+    }
+
+    /// Adds a login to the anonymous account playing here, from the lobby.
+    /// The account stays the same, and so does its game history; the login
+    /// becomes the player's name.
+    ///
+    /// When the anonymous session is over (revoked, or the login was added
+    /// already by a request whose answer was lost, which revoked our tokens),
+    /// goes back to the sign-in screen, saying why. Either way the error is
+    /// thrown, for the form to show.
+    func addLogin(login: String, password: String, email: String = "") async throws(AuthError) {
+        do {
+            try await accounts.upgrade(login: login, password: password, email: email)
+        } catch {
+            if error.isSignedOut || error == .alreadyRegistered {
+                await signOut()
+                signInError = authErrorText(error)
+            }
+            throw error
+        }
+        settings.account = .login
+        displayName = accounts.user?.name ?? login
+        // The game server took the name from the token we connected with:
+        // connect again with the new one, so opponents see the login too.
+        // From the lobby there is no game or room to resume.
+        if connectionManager.isConnected, !state.needsResume {
+            await connectionManager.disconnect()
+            settings.resumeToken = nil
+            await connect()
+        }
+        // Same account, same games: the list beside the lobby is read again
+        // with the new session, as after any change of account.
+        if history.isAvailable {
+            await history.reload()
+        }
+    }
+
     /// Forgets the identity and returns to the sign-in screen. Not available
     /// during a game.
     func signOut() async {

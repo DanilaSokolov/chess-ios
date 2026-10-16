@@ -55,6 +55,28 @@ struct AuthLiveTests {
         try await auth.logOut(session.refreshToken)
     }
 
+    /// A login added to an anonymous account: the same user, a new session,
+    /// the old refresh token revoked; a second time is refused with its reason.
+    @Test func loginAddedToAnonymousAccount() async throws {
+        let anonymous = try await auth.signUpAnonymously()
+        let login = "link" + String(UInt32.random(in: 0...UInt32.max), radix: 36)
+        let linked = try await auth.register(
+            login: login, password: "correct horse", email: "", accessToken: anonymous.accessToken)
+        #expect(linked.userID == anonymous.userID && linked.name == login && !linked.anonymous)
+        #expect(linked.refreshToken != anonymous.refreshToken)
+        await #expect(throws: AuthError.alreadyRegistered) {
+            try await auth.register(
+                login: login + "x", password: "correct horse", email: "", accessToken: linked.accessToken)
+        }
+        // Last: a revoked token presented again may revoke the new session too, as a theft.
+        await #expect(throws: AuthError.self) {
+            try await auth.refresh(anonymous.refreshToken)
+        }
+        let session = try await auth.logIn(login: login, password: "correct horse")
+        #expect(session.userID == anonymous.userID)
+        try await auth.logOut(session.refreshToken)
+    }
+
     /// Three wrong passwords lock signing in; the lock and its length come
     /// through google.rpc.ErrorInfo.
     @Test func wrongPasswordsLockTheLogin() async throws {

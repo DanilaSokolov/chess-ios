@@ -20,6 +20,13 @@ final class FakeAuth: AuthAPI {
             refreshToken: refresh)
     }
 
+    /// The same account as `session` ("u1"), with a login added.
+    static func upgraded(_ login: String, refresh: String) -> AuthSession {
+        AuthSession(
+            userID: "u1", name: login, anonymous: false, accessToken: "access-\(login)", expiresIn: 900,
+            refreshToken: refresh)
+    }
+
     func reply(_ method: String, _ result: Result<AuthSession?, AuthError>) {
         replies.withLock { $0[method] = result }
     }
@@ -41,6 +48,20 @@ final class FakeAuth: AuthAPI {
         try await session("register")
     }
     func logIn(login: String, password: String) async throws(AuthError) -> AuthSession { try await session("logIn") }
+
+    /// The access tokens signed-in calls came with, in order.
+    let accessTokens = Mutex<[String]>([])
+
+    func register(login: String, password: String, email: String, accessToken: String) async throws(AuthError)
+        -> AuthSession
+    {
+        try signedIn("upgrade")
+        accessTokens.withLock { $0.append(accessToken) }
+        try? await Task.sleep(for: delay)
+        guard let result = replies.withLock({ $0["upgrade"] }) else { throw .unreachable }
+        guard let session = try result.get() else { throw .badResponse }
+        return session
+    }
     func refresh(_ refreshToken: String) async throws(AuthError) -> AuthSession { try await session("refresh") }
     func logOut(_ refreshToken: String) async throws(AuthError) { _ = try await answer("logOut") }
 
@@ -210,6 +231,93 @@ struct AccountManagerTests {
         }
         #expect(!accounts.hasAccount)
         #expect(authErrorText(.refused(code: "bad_credentials")) == "Wrong login or password.")
+    }
+
+    // MARK: Adding a login to an anonymous account
+
+    /// The account stays the same: same id, the login as its name, the new
+    /// session's tokens kept; asked with the anonymous session's access token.
+    @Test func upgradeKeepsTheAccount() async throws {
+        let store = MemorySecretStore()
+        let auth = FakeAuth()
+        auth.reply("signUpAnonymously", .success(FakeAuth.session("1", refresh: "r1")))
+        auth.reply("upgrade", .success(FakeAuth.upgraded("alice", refresh: "r2")))
+        let accounts = manager(store, auth: auth)
+        try await accounts.signUpAnonymously()
+        #expect(accounts.user == AccountManager.User(id: "u1", name: "anonim1", isAnonymous: true))
+
+        try await accounts.upgrade(login: "alice", password: "correct horse")
+        #expect(accounts.user == AccountManager.User(id: "u1", name: "alice", isAnonymous: false))
+        #expect(store.read() == "r2", "the old refresh token is revoked by auth: the new one is kept")
+        #expect(auth.accessTokens.withLock { $0 } == ["access-1"])
+        #expect(try await accounts.validAccessToken() == "access-alice")
+        #expect(auth.calls.withLock { $0 } == ["signUpAnonymously", "upgrade"])
+    }
+
+    @Test func upgradeOfARegisteredAccountIsRefused() async throws {
+        let store = MemorySecretStore()
+        let auth = FakeAuth()
+        auth.reply("signUpAnonymously", .success(FakeAuth.session("1", refresh: "r1")))
+        auth.reply("upgrade", .failure(.alreadyRegistered))
+        let accounts = manager(store, auth: auth)
+        try await accounts.signUpAnonymously()
+        await #expect(throws: AuthError.alreadyRegistered) {
+            try await accounts.upgrade(login: "alice", password: "correct horse")
+        }
+        #expect(store.read() == "r1" && accounts.user?.isAnonymous == true, "a refusal changes nothing here")
+        #expect(authErrorText(.alreadyRegistered) == "This account already has a login. Sign in with it.")
+    }
+
+    /// Known to have a login already: refused without asking auth.
+    @Test func secondUpgradeIsRefusedHere() async throws {
+        let auth = FakeAuth()
+        auth.reply("signUpAnonymously", .success(FakeAuth.session("1", refresh: "r1")))
+        auth.reply("upgrade", .success(FakeAuth.upgraded("alice", refresh: "r2")))
+        let accounts = manager(auth: auth)
+        try await accounts.signUpAnonymously()
+        try await accounts.upgrade(login: "alice", password: "correct horse")
+        await #expect(throws: AuthError.alreadyRegistered) {
+            try await accounts.upgrade(login: "bob", password: "correct horse")
+        }
+        #expect(auth.calls.withLock { $0 } == ["signUpAnonymously", "upgrade"])
+    }
+
+    /// The access token expired on the way: renewed once, then asked again.
+    @Test func upgradeRenewsARefusedToken() async throws {
+        let store = MemorySecretStore()
+        let auth = FakeAuth()
+        auth.reply("signUpAnonymously", .success(FakeAuth.session("1", refresh: "r1")))
+        auth.reply("refresh", .success(FakeAuth.session("2", refresh: "r2")))
+        auth.reply("upgrade", .success(FakeAuth.upgraded("alice", refresh: "r3")))
+        let accounts = manager(store, auth: auth)
+        try await accounts.signUpAnonymously()
+        auth.refuseNextToken.withLock { $0 = true }
+        try await accounts.upgrade(login: "alice", password: "correct horse")
+        #expect(auth.calls.withLock { $0 } == ["signUpAnonymously", "upgrade", "refresh", "upgrade"])
+        #expect(auth.accessTokens.withLock { $0 } == ["access-2"], "the refused call is not recorded")
+        #expect(store.read() == "r3")
+        #expect(accounts.user?.name == "alice" && accounts.user?.isAnonymous == false)
+    }
+
+    /// A renewal asked for while the login is being added must not spend the
+    /// old refresh token (auth revokes it): it waits and gets the new session.
+    @Test func renewalWaitsForTheUpgrade() async throws {
+        let store = MemorySecretStore()
+        let auth = FakeAuth(delay: .milliseconds(300))
+        auth.reply("signUpAnonymously", .success(FakeAuth.session("1", refresh: "r1")))
+        auth.reply("refresh", .success(FakeAuth.session("2", refresh: "r2")))
+        auth.reply("upgrade", .success(FakeAuth.upgraded("alice", refresh: "r3")))
+        let accounts = manager(store, auth: auth)
+        try await accounts.signUpAnonymously()
+
+        async let upgrade: Void = accounts.upgrade(login: "alice", password: "correct horse")
+        try await Task.sleep(for: .milliseconds(100))
+        accounts.dropAccessToken()  // As when the game server refuses the token meanwhile.
+        let token = try await accounts.validAccessToken()
+        try await upgrade
+        #expect(token == "access-alice")
+        #expect(!auth.calls.withLock { $0 }.contains("refresh"))
+        #expect(store.read() == "r3")
     }
 
     @Test func signOutForgetsAndRevokes() async throws {

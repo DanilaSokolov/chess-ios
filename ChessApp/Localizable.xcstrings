@@ -263,6 +263,16 @@
         }
       }
     },
+    "Create a login" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Создать логин"
+          }
+        }
+      }
+    },
     "Create a room" : {
       "localizations" : {
         "ru" : {
@@ -1413,6 +1423,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вы: %@"
+          }
+        }
+      }
+    },
+    "Your account and its game history stay the same; the login becomes your name." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Аккаунт и история партий останутся прежними, а логин станет вашим именем."
           }
         }
       }

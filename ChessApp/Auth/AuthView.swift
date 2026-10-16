@@ -1,3 +1,5 @@
+import ChessClient
+import ChessNet
 import SwiftUI
 
 /// First screen: sign in with a login, or play without one.
@@ -87,27 +89,62 @@ struct AuthView: View {
     }
 }
 
-/// Login and password, for signing in or making an account.
-private struct LoginForm: View {
+/// Login and password, for signing in or making an account; or, for a player
+/// already playing anonymously, for adding a login to that account.
+struct LoginForm: View {
+    enum Purpose {
+        /// The sign-in screen: sign in, or make a new account.
+        case signIn
+        /// The anonymous account playing here gets a login (`AddLoginView`).
+        /// Always a new login, so the form is the "New account" one.
+        case addLogin
+    }
+
+    let purpose: Purpose
     @Environment(GameModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
     @State private var login = ""
     @State private var password = ""
     @State private var email = ""
-    @State private var isNew = false
+    @State private var isNew: Bool
     @State private var showsReset = false
     @State private var isWorking = false
+    /// Why adding a login failed. Signing in keeps its error in the model,
+    /// where the sign-in screen reads it too.
+    @State private var addLoginError: String?
     @FocusState private var focus: Field?
 
     private enum Field { case login, password, email }
 
+    init(purpose: Purpose = .signIn) {
+        self.purpose = purpose
+        _isNew = State(initialValue: purpose == .addLogin)
+    }
+
+    private var error: String? {
+        switch purpose {
+        case .signIn: model.signInError
+        case .addLogin: addLoginError
+        }
+    }
+
+    private var submitTitle: LocalizedStringKey {
+        switch purpose {
+        case .signIn: isNew ? "Create account" : "Sign in"
+        case .addLogin: "Create a login"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 10) {
-            Picker("Account", selection: $isNew) {
-                Text("Sign in").tag(false)
-                Text("New account").tag(true)
+            if purpose == .signIn {
+                Picker("Account", selection: $isNew) {
+                    Text("Sign in").tag(false)
+                    Text("New account").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             TextField("Login", text: $login)
                 .textContentType(.username)
@@ -148,7 +185,7 @@ private struct LoginForm: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let error = model.signInError {
+            if let error {
                 Text(error)
                     .font(.footnote)
                     .foregroundStyle(.red)
@@ -161,7 +198,7 @@ private struct LoginForm: View {
                     if isWorking {
                         ProgressView()
                     } else {
-                        Text(isNew ? "Create account" : "Sign in")
+                        Text(submitTitle)
                     }
                 }
                 .frame(maxWidth: .infinity, minHeight: 32)
@@ -186,8 +223,21 @@ private struct LoginForm: View {
         guard !isWorking, !login.isEmpty, !password.isEmpty else { return }
         isWorking = true
         Task {
-            await model.signIn(login: login, password: password, email: isNew ? email : "", isNew: isNew)
-            isWorking = false
+            switch purpose {
+            case .signIn:
+                await model.signIn(login: login, password: password, email: isNew ? email : "", isNew: isNew)
+                isWorking = false
+            case .addLogin:
+                addLoginError = nil
+                do {
+                    try await model.addLogin(login: login, password: password, email: email)
+                    isWorking = false
+                    dismiss()  // The lobby now shows the login as the name.
+                } catch {
+                    isWorking = false
+                    addLoginError = authErrorText(error)
+                }
+            }
         }
     }
 }

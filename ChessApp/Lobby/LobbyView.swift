@@ -20,6 +20,7 @@ struct LobbyView: View {
     #endif
     @State private var roomCode = ""
     @State private var showsEmail = false
+    @State private var showsAddLogin = false
     /// Both columns, always: hiding the sidebar would hide the lobby, the very
     /// thing this screen is for, behind a toolbar button.
     @State private var columns = NavigationSplitViewVisibility.doubleColumn
@@ -51,6 +52,12 @@ struct LobbyView: View {
             EmailView()
                 #if os(macOS)
                     .frame(minWidth: 420, minHeight: 420)
+                #endif
+        }
+        .sheet(isPresented: $showsAddLogin) {
+            AddLoginView()
+                #if os(macOS)
+                    .frame(minWidth: 420, minHeight: 460)
                 #endif
         }
     }
@@ -124,6 +131,13 @@ struct LobbyView: View {
                     }
                     Spacer()
                     Button("Leave") { Task { await model.signOut() } }
+                }
+                if model.canAddLogin {
+                    Button {
+                        showsAddLogin = true
+                    } label: {
+                        Label("Create a login", systemImage: "person.badge.key")
+                    }
                 }
                 if model.settings.account == .login {
                     Button {

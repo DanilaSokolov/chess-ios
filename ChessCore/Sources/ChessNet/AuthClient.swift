@@ -41,6 +41,10 @@ public enum AuthError: Error, Equatable, Sendable {
     case refused(code: String)
     /// Too many wrong passwords: signing in is locked for this long.
     case temporarilyLocked(retryAfterSeconds: Int)
+    /// Adding a login to an account that already has one (reason
+    /// "ALREADY_REGISTERED"): it was added before, maybe by a request whose
+    /// answer was lost. The anonymous session is gone; sign in with the login.
+    case alreadyRegistered
     /// No answer: no network, or the service is down.
     case unreachable
     /// An answer we could not read.
@@ -70,6 +74,12 @@ public protocol AuthAPI: Sendable {
     func signUpAnonymously() async throws(AuthError) -> AuthSession
     /// `email` is optional: empty for none.
     func register(login: String, password: String, email: String) async throws(AuthError) -> AuthSession
+    /// Adds a login to the anonymous account `accessToken` belongs to: the
+    /// same user id (and so the same game history), now named `login`. The
+    /// answer is a new session; every older refresh token of the account is
+    /// revoked by it.
+    func register(login: String, password: String, email: String, accessToken: String) async throws(AuthError)
+        -> AuthSession
     func logIn(login: String, password: String) async throws(AuthError) -> AuthSession
     func refresh(_ refreshToken: String) async throws(AuthError) -> AuthSession
     func logOut(_ refreshToken: String) async throws(AuthError)
@@ -112,6 +122,17 @@ public struct AuthClient: AuthAPI {
             $0.email = email
         }
         return try await session { try await $0.register(request, options: $1) }
+    }
+
+    public func register(login: String, password: String, email: String, accessToken: String) async throws(AuthError)
+        -> AuthSession
+    {
+        let request = Chess_Auth_V1_RegisterRequest.with {
+            $0.login = login
+            $0.password = password
+            $0.email = email
+        }
+        return AuthSession(try await call(accessToken) { try await $0.register(request, metadata: $1, options: $2) })
     }
 
     public func logIn(login: String, password: String) async throws(AuthError) -> AuthSession {
@@ -199,10 +220,15 @@ public struct AuthClient: AuthAPI {
         if let status = try? error.unpackGoogleRPCStatus(),
             let info = status.details.lazy.compactMap(\.errorInfo).first
         {
-            if info.reason == "TEMPORARILY_LOCKED" {
+            let reason = info.reason.lowercased()
+            switch reason {
+            case "temporarily_locked":
                 return .temporarilyLocked(retryAfterSeconds: Int(info.metadata["retry_after_seconds"] ?? "") ?? 900)
+            case "already_registered":
+                return .alreadyRegistered
+            default:
+                return .refused(code: reason)
             }
-            return .refused(code: info.reason.lowercased())
         }
         switch error.code {
         case .unauthenticated: return .refused(code: "invalid_token")
