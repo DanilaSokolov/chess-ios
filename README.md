@@ -347,4 +347,4 @@ cd apple/ChessCore && CHESS_SERVER_URL=ws://localhost:8080/ws CHESS_BOT=1 swift 
 - [x] Чат партии, игра с другом через комнату по коду
 - [x] Доска 2D / 3D (RealityKit), переключатель в партии, перетаскивание фигур в обоих режимах
 - [ ] 4. Рейтинг Glicko-2, Game Center
-- [ ] 5. Деплой: бинарник + Postgres за Caddy (TLS)
+- [ ] 5. Деплой: сервисы + Postgres

@@ -123,4 +123,4 @@ API iOS 27.1 сверены по SDK Xcode 27.1: `onHingeChange` / `DeviceHinge`
 - [ ] Рейтинг Glicko-2, Game Center
 - [x] Перетаскивание фигур
 - [ ] Компенсация сетевой задержки на часах
-- [ ] Деплой: сервисы + Postgres за Caddy (TLS)
+- [ ] Деплой: сервисы + Postgres
