@@ -1,0 +1,110 @@
+syntax = "proto3";
+
+package chess.history.v1;
+
+option go_package = "chess/server/internal/pb/historypb;historypb";
+
+import "chess/v1/chess.proto";
+import "google/protobuf/timestamp.proto";
+
+// Finished games: the game server records them, players read their own.
+// Runs as its own process (server/cmd/history) with its own database.
+//
+// Who may call what:
+//   - RecordGame: the game server only. It sends metadata
+//     "x-internal-token: <shared secret>" (HISTORY_INTERNAL_TOKEN).
+//   - everything else: a signed-in player, with metadata
+//     "authorization: Bearer <access token from auth>". History checks the
+//     token with auth's public keys, like the game server does, and shows a
+//     player only their own games.
+//
+// Errors are gRPC codes: UNAUTHENTICATED (no or bad token), NOT_FOUND (no
+// such game, or not yours: the two look the same), INVALID_ARGUMENT.
+service HistoryService {
+  // Stores a finished game. Idempotent: the game server retries until it
+  // gets an answer, so the same game may arrive twice and is stored once.
+  rpc RecordGame(RecordGameRequest) returns (RecordGameResponse);
+  // The player's games, newest first, a page at a time.
+  rpc ListGames(ListGamesRequest) returns (ListGamesResponse);
+  // One game with all its moves, for replaying.
+  rpc GetGame(GetGameRequest) returns (GetGameResponse);
+  // Totals: games, wins, losses, draws.
+  rpc GetSummary(GetSummaryRequest) returns (GetSummaryResponse);
+}
+
+message Player {
+  // The account's id; empty for a guest (a bot), who has no history.
+  string user_id = 1;
+  string name = 2;
+}
+
+message GameRecord {
+  // The game server's id for the game.
+  string game_id = 1;
+  Player white = 2;
+  Player black = 3;
+  chess.v1.TimeControl time_control = 4;
+  chess.v1.Result result = 5;
+  chess.v1.Termination termination = 6;
+  // All moves in UCI ("e2e4", "e7e8q"), from the starting position.
+  repeated string moves = 7;
+  google.protobuf.Timestamp started_at = 8;
+  google.protobuf.Timestamp finished_at = 9;
+}
+
+message RecordGameRequest {
+  GameRecord game = 1;
+}
+
+message RecordGameResponse {}
+
+message ListGamesRequest {
+  // At most this many; 0 means 20, more than 100 means 100.
+  int32 page_size = 1;
+  // From the previous response; empty for the first page.
+  string page_token = 2;
+}
+
+// A game as the player who asks sees it.
+message GameEntry {
+  string game_id = 1;
+  chess.v1.Color your_color = 2;
+  Player opponent = 3;
+  Outcome outcome = 4;
+  chess.v1.Termination termination = 5;
+  chess.v1.TimeControl time_control = 6;
+  // Half-moves played.
+  int32 plies = 7;
+  google.protobuf.Timestamp finished_at = 8;
+}
+
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_WIN = 1;
+  OUTCOME_LOSS = 2;
+  OUTCOME_DRAW = 3;
+}
+
+message ListGamesResponse {
+  repeated GameEntry games = 1;
+  // Pass it to get the next page; empty on the last page.
+  string next_page_token = 2;
+}
+
+message GetGameRequest {
+  string game_id = 1;
+}
+
+message GetGameResponse {
+  GameRecord game = 1;
+  chess.v1.Color your_color = 2;
+}
+
+message GetSummaryRequest {}
+
+message GetSummaryResponse {
+  int32 games = 1;
+  int32 wins = 2;
+  int32 losses = 3;
+  int32 draws = 4;
+}

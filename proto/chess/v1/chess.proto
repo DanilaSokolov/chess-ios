@@ -1,0 +1,315 @@
+syntax = "proto3";
+
+package chess.v1;
+
+option go_package = "chess/server/internal/pb;pb";
+
+// Every WebSocket binary frame carries exactly one envelope.
+// Client -> server frames are ClientMessage, server -> client are ServerMessage.
+//
+// Protocol version 4.
+
+message ClientMessage {
+  oneof payload {
+    Hello hello = 1;
+    FindGame find_game = 2;
+    CancelSearch cancel_search = 3;
+    MakeMove make_move = 4;
+    Resign resign = 5;
+    OfferDraw offer_draw = 6;
+    DeclineDraw decline_draw = 7;
+    SendChat send_chat = 8;
+    CreateRoom create_room = 9;
+    JoinRoom join_room = 10;
+    LeaveRoom leave_room = 11;
+    SetReady set_ready = 12;
+  }
+}
+
+message ServerMessage {
+  oneof payload {
+    Welcome welcome = 1;
+    SearchStarted search_started = 2;
+    SearchCancelled search_cancelled = 3;
+    GameStarted game_started = 4;
+    MoveMade move_made = 5;
+    MoveRejected move_rejected = 6;
+    GameOver game_over = 7;
+    Error error = 8;
+    DrawOffer draw_offer = 9;
+    OpponentStatus opponent_status = 10;
+    GameSnapshot snapshot = 11;
+    ChatMessage chat_message = 12;
+    RoomState room_state = 13;
+    RoomLeft room_left = 14;
+  }
+}
+
+// --- Session ---
+
+// Must be the first message on a connection.
+message Hello {
+  uint32 protocol_version = 1;
+  string name = 2; // Display name; ignored when anonymous.
+  // Token from an earlier Welcome. When the server still knows it, the
+  // connection resumes that player, and a game in progress continues with a
+  // GameSnapshot.
+  string resume_token = 3;
+  // Play without an account. The server ignores name and assigns
+  // "anonim" + the first 6 hex characters of the player id.
+  bool anonymous = 4;
+  // Language of the client's interface, a BCP 47 code such as "ru" or "en",
+  // like HTTP's Accept-Language. The server keeps it with the player and
+  // tells opponents, so a bot can talk in their language. Errors stay
+  // codes: clients turn them into text themselves. Empty: unknown.
+  string language = 5;
+  // Access token from the auth service (a JWT). The server checks its
+  // signature with auth's public key; the player's permanent id and name come
+  // from it, and name and anonymous above are ignored. An invalid token is
+  // refused with Error "invalid_token": the app gets a fresh one and retries.
+  // Empty: a guest without an account, as bots and tests play.
+  string access_token = 6;
+}
+
+message Welcome {
+  string player_id = 1;
+  string resume_token = 2; // Keep it secret; it identifies the player.
+  bool resumed = 3;        // True when resume_token was accepted.
+  string name = 4;         // Display name the server uses for this player.
+}
+
+// --- Matchmaking ---
+
+message TimeControl {
+  uint32 initial_seconds = 1;
+  uint32 increment_seconds = 2;
+}
+
+message FindGame {
+  TimeControl time_control = 1;
+  // Preferred side; UNSPECIFIED means either. Players are only paired when
+  // their preferences are compatible.
+  Color color = 2;
+}
+
+message CancelSearch {}
+
+message SearchStarted {
+  TimeControl time_control = 1;
+}
+
+message SearchCancelled {}
+
+// --- Game ---
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_WHITE = 1;
+  COLOR_BLACK = 2;
+}
+
+// Remaining time when the message was sent. While a game is in progress the
+// clock of the side to move is running; clients count it down locally.
+message Clocks {
+  uint32 white_ms = 1;
+  uint32 black_ms = 2;
+}
+
+message GameStarted {
+  string game_id = 1;
+  Color color = 2; // Color of the receiving player.
+  string opponent_name = 3;
+  string fen = 4;
+  TimeControl time_control = 5;
+  Clocks clocks = 6;
+  string opponent_language = 7; // See Hello.language.
+}
+
+// Full game state, sent after a resumed connection. Replaces whatever the
+// client had.
+message GameSnapshot {
+  string game_id = 1;
+  Color color = 2;
+  string opponent_name = 3;
+  TimeControl time_control = 4;
+  repeated string moves = 5; // UCI, from the initial position.
+  string fen = 6;            // Current position.
+  Clocks clocks = 7;
+  Color draw_offered_by = 8; // UNSPECIFIED when there is no pending offer.
+  bool opponent_connected = 9;
+  uint32 opponent_reconnect_ms = 10; // Grace left when the opponent is away.
+  string opponent_language = 12;     // See Hello.language.
+  repeated ChatMessage chat = 11;    // Recent chat, oldest first.
+}
+
+// ply is the 1-based number of the half-move being made: White's first move is 1,
+// Black's reply is 2, and so on. The server accepts a move only when
+// ply == moves_played + 1, which makes retries idempotent.
+message MakeMove {
+  string game_id = 1;
+  uint32 ply = 2;
+  string uci = 3; // e2e4, e7e8q
+}
+
+// Sent to both players, including the one who made the move.
+message MoveMade {
+  string game_id = 1;
+  uint32 ply = 2;
+  string uci = 3;
+  string fen = 4; // Authoritative position after the move.
+  Clocks clocks = 5; // After the move, increment included.
+}
+
+// Sent only to the player whose move was refused.
+message MoveRejected {
+  string game_id = 1;
+  uint32 ply = 2;
+  string reason = 3;
+  string fen = 4; // Current authoritative position to resync to.
+}
+
+message Resign {
+  string game_id = 1;
+}
+
+// Offers a draw, or accepts the opponent's pending offer.
+message OfferDraw {
+  string game_id = 1;
+}
+
+message DeclineDraw {
+  string game_id = 1;
+}
+
+// Sent to both players whenever the pending offer changes. An offer is
+// withdrawn when the opponent declines it or makes a move instead.
+message DrawOffer {
+  string game_id = 1;
+  Color offered_by = 2; // UNSPECIFIED: no pending offer.
+}
+
+// Sent when the opponent's connection drops or comes back.
+message OpponentStatus {
+  string game_id = 1;
+  bool connected = 2;
+  // While disconnected: how long the opponent has to return before losing.
+  uint32 reconnect_ms = 3;
+}
+
+// --- Chat ---
+
+// A chat line to a game or, when room_code is set, to a room. The server
+// trims and collapses whitespace, rejects empty and over-long text and
+// rate-limits senders; refusals come back as Error with code chat_empty,
+// chat_too_long or chat_rate_limited.
+message SendChat {
+  string game_id = 1;
+  string text = 2;      // Up to 200 characters.
+  string room_code = 3; // Room chat; game_id is ignored.
+}
+
+// Sent to everyone in the game or room, including the author. The author is
+// set by the server.
+message ChatMessage {
+  string game_id = 1;   // Empty for room chat.
+  uint32 seq = 2;       // 1-based, increasing per game or room; lets clients drop duplicates.
+  Color from = 3;       // Game chat only.
+  string text = 4;
+  int64 sent_at_ms = 5; // Unix milliseconds, server time.
+  string room_code = 6; // Empty for game chat.
+  string author = 7;    // Display name of the author.
+  bool yours = 8;       // The receiving player wrote it.
+}
+
+// --- Rooms ---
+//
+// A room gathers two players before a game. The creator gets a code to pass
+// on; the other player joins with it. When both are ready the game starts,
+// and when it ends both are back in the room for a rematch with colors
+// swapped. A player is in at most one room and cannot search for a game
+// meanwhile. Errors: room_not_found, room_full, already_in_room,
+// not_in_room, game_in_progress, room_rate_limited.
+
+message CreateRoom {
+  TimeControl time_control = 1;
+  Color color = 2; // Creator's side in the first game; UNSPECIFIED for random.
+}
+
+message JoinRoom {
+  string code = 1; // Case-insensitive.
+}
+
+// Leaves the room. Not allowed while its game is in progress; resign first.
+message LeaveRoom {}
+
+// Both players ready starts a short countdown (see RoomState.starts_in_ms),
+// then the game. Readiness resets when a game starts and when someone joins,
+// leaves or drops out; that also cancels a countdown.
+message SetReady {
+  bool ready = 1;
+}
+
+message RoomMember {
+  string name = 1;
+  bool ready = 2;
+  bool you = 3;
+  bool host = 4;
+  bool connected = 5;
+  string language = 6; // See Hello.language.
+}
+
+// Full room state, sent to its members on every change and after a resumed
+// connection.
+message RoomState {
+  string code = 1;
+  TimeControl time_control = 2;
+  repeated RoomMember members = 3; // Host first; at most two.
+  string game_id = 4;              // Game in progress, if any.
+  Color your_next_color = 5;       // Receiver's side in the next game; UNSPECIFIED: random.
+  // Recent chat, oldest first. Sent on create, join and after a resumed
+  // connection; empty in later updates, where clients keep what they have.
+  repeated ChatMessage chat = 6;
+  uint32 games_played = 7;
+  // Both players are ready: the game starts in this many milliseconds unless
+  // someone cancels by unreadying, leaving or dropping out. 0: no countdown.
+  // Relative rather than a timestamp, so a client clock that is off does not matter.
+  uint32 starts_in_ms = 8;
+}
+
+// The player is no longer in a room: it left, or was dropped after not
+// coming back in time.
+message RoomLeft {
+  string code = 1;
+}
+
+enum Result {
+  RESULT_UNSPECIFIED = 0;
+  RESULT_WHITE_WINS = 1;
+  RESULT_BLACK_WINS = 2;
+  RESULT_DRAW = 3;
+}
+
+enum Termination {
+  TERMINATION_UNSPECIFIED = 0;
+  TERMINATION_CHECKMATE = 1;
+  TERMINATION_STALEMATE = 2;
+  TERMINATION_INSUFFICIENT_MATERIAL = 3;
+  TERMINATION_THREEFOLD_REPETITION = 4;
+  TERMINATION_FIFTY_MOVE_RULE = 5;
+  TERMINATION_RESIGNATION = 6;
+  TERMINATION_ABANDONMENT = 7; // Opponent did not reconnect in time.
+  TERMINATION_TIMEOUT = 8;     // Draw if the other side cannot possibly mate.
+  TERMINATION_DRAW_AGREEMENT = 9;
+}
+
+message GameOver {
+  string game_id = 1;
+  Result result = 2;
+  Termination termination = 3;
+  Clocks clocks = 4; // Final clock readings.
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}

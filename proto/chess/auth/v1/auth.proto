@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package chess.auth.v1;
+
+option go_package = "chess/server/internal/pb/authpb;authpb";
+
+// The sign-in service: accounts, passwords and the tokens that let a player
+// into the game server. Runs as its own process (server/cmd/auth).
+//
+// Two kinds of token:
+//   - access token: a JWT for 15 minutes, signed with Ed25519. The game server
+//     checks it by itself, with the public key from GetPublicKeys.
+//   - refresh token: a random string for 60 days, stored (hashed) by auth. The
+//     app trades it in Refresh for a new pair; each one works once.
+//
+// Errors are gRPC status codes with a google.rpc.ErrorInfo detail, domain
+// "auth.chess", whose reason the app turns into words in the player's language:
+//   INVALID_ARGUMENT   INVALID_LOGIN, WEAK_PASSWORD
+//   ALREADY_EXISTS     LOGIN_TAKEN
+//   UNAUTHENTICATED    BAD_CREDENTIALS, INVALID_TOKEN
+//   INVALID_ARGUMENT   INVALID_EMAIL, INVALID_CODE (wrong, expired or used up: one answer)
+//   ALREADY_EXISTS     EMAIL_TAKEN
+//   PERMISSION_DENIED  BANNED, TEMPORARILY_LOCKED (RetryInfo says how long), ACCOUNT_LOCKED
+//   RESOURCE_EXHAUSTED RATE_LIMITED
+//
+// Checking an access token is two steps. Other services check the signature
+// themselves (GetPublicKeys), with no call here: fast, and auth being down
+// does not stop people who are signed in. Then, where it matters (connecting
+// to a game, reading history), they ask CheckSession whether the token's
+// session ("sid" claim) still stands: signed out, revoked after a theft, or
+// banned. They cache the answer for a minute, and let the player in on a
+// valid signature when auth does not answer.
+service AuthService {
+  // A new account without a login, for one device.
+  rpc SignUpAnonymously(SignUpAnonymouslyRequest) returns (Session);
+  // A new account with a login and password.
+  rpc Register(RegisterRequest) returns (Session);
+  rpc LogIn(LogInRequest) returns (Session);
+  // Trades a refresh token for a new session. A token used twice was stolen:
+  // its whole family is revoked, and both copies stop working.
+  rpc Refresh(RefreshRequest) returns (Session);
+  // Revokes the refresh token: the device is signed out on the server too.
+  rpc LogOut(LogOutRequest) returns (LogOutResponse);
+  // The public keys that check access tokens. For other services (the game
+  // server), not for the app.
+  rpc GetPublicKeys(GetPublicKeysRequest) returns (GetPublicKeysResponse);
+  // Whether a session may still be used: not signed out, not revoked, and its
+  // account not banned. For other services, after they checked the signature.
+  rpc CheckSession(CheckSessionRequest) returns (CheckSessionResponse);
+
+  // The rest are for a signed-in player: metadata "authorization: Bearer
+  // <access token>".
+
+  // The account as its owner sees it: login and email.
+  rpc GetAccount(GetAccountRequest) returns (Account);
+  // Sets (or changes) the email and sends a code to it. The address is used
+  // only once confirmed with VerifyEmail.
+  rpc SetEmail(SetEmailRequest) returns (SetEmailResponse);
+  rpc VerifyEmail(VerifyEmailRequest) returns (Account);
+
+  // Forgot the password: no sign-in needed.
+
+  // Sends a reset code to the account's confirmed email. Always answers the
+  // same, whether or not the login exists or has an email: the answer must
+  // not tell anyone which logins are registered.
+  rpc RequestPasswordReset(RequestPasswordResetRequest) returns (RequestPasswordResetResponse);
+  // Sets a new password with the code from the email, lifts any lock from
+  // wrong passwords, ends every session of the account (if the password was
+  // reset because of a break-in, the intruder is out too), and signs in.
+  rpc ResetPassword(ResetPasswordRequest) returns (Session);
+}
+
+message SignUpAnonymouslyRequest {}
+
+message RegisterRequest {
+  // 3–32 characters: Latin letters, digits, '.', '_', '-'; case-insensitive.
+  string login = 1;
+  // 8–128 characters, anything.
+  string password = 2;
+  // Optional. When set, a code is sent to confirm it (see VerifyEmail); a
+  // confirmed email is what lets the player reset a forgotten password.
+  string email = 3;
+}
+
+message LogInRequest {
+  string login = 1;
+  string password = 2;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+}
+
+message LogOutRequest {
+  string refresh_token = 1;
+}
+
+message LogOutResponse {}
+
+// What every successful sign-in or refresh returns.
+message Session {
+  // Permanent: the game server knows the player by it.
+  string user_id = 1;
+  // Shown to opponents: the login, or "anonim" + 6 hex characters.
+  string name = 2;
+  bool anonymous = 3;
+  // For Hello.access_token on the game server.
+  string access_token = 4;
+  int32 expires_in_seconds = 5;
+  // Secret and long-lived: the app keeps it in the Keychain.
+  string refresh_token = 6;
+}
+
+message GetPublicKeysRequest {}
+
+message GetPublicKeysResponse {
+  repeated PublicKey keys = 1;
+}
+
+// An Ed25519 public key. The access token's "kid" header names which one
+// signed it, so keys can be rotated: old ones stay listed until their tokens expire.
+message PublicKey {
+  string kid = 1;
+  bytes ed25519 = 2; // 32 bytes
+}
+
+message CheckSessionRequest {
+  // The access token's "sid": the session (a chain of refresh tokens) it came from.
+  string session_id = 1;
+  // The token's "sub": the session must belong to this account.
+  string user_id = 2;
+}
+
+message CheckSessionResponse {
+  bool active = 1;
+  // Why not, when not active: "signed_out" (or revoked, or unknown), "banned".
+  string reason = 2;
+}
+
+message GetAccountRequest {}
+
+message Account {
+  string user_id = 1;
+  // Empty for an anonymous account.
+  string login = 2;
+  // Empty: none set.
+  string email = 3;
+  // Confirmed with a code: password reset works.
+  bool email_verified = 4;
+}
+
+message SetEmailRequest {
+  string email = 1;
+}
+
+message SetEmailResponse {}
+
+message VerifyEmailRequest {
+  // The 6 digits from the email.
+  string code = 1;
+}
+
+message RequestPasswordResetRequest {
+  string login = 1;
+}
+
+message RequestPasswordResetResponse {}
+
+message ResetPasswordRequest {
+  string login = 1;
+  string code = 2;
+  string new_password = 3;
+}

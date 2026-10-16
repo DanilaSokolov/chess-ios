@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package chess.v1;
+
+option go_package = "chess/server/internal/pb;pb";
+
+import "chess/v1/chess.proto";
+
+// What the app asks the game server before it connects. gRPC on the same
+// address as the WebSocket game channel (/ws): the server speaks HTTP/1.1 for
+// WebSocket and HTTP/2 for gRPC on one port. Liveness is the standard
+// grpc.health.v1.Health service.
+service GameInfo {
+  // Whether this version of the app may play, and settings that should not
+  // be built into the app. Asked on the splash screen.
+  rpc Bootstrap(BootstrapRequest) returns (BootstrapResponse);
+}
+
+message BootstrapRequest {
+  // CFBundleShortVersionString, such as "1.4.1".
+  string client_version = 1;
+  // The WebSocket protocol the app speaks (Hello.protocol_version).
+  uint32 protocol_version = 2;
+  // The app's interface language, a BCP 47 code such as "ru".
+  string language = 3;
+}
+
+message BootstrapResponse {
+  ClientStatus status = 1;
+  string min_version = 2;
+  string latest_version = 3;
+  // Where to update: the App Store page. Empty: not set.
+  string update_url = 4;
+  // Offered in the lobby, in order.
+  repeated TimeControl time_controls = 5;
+  // Where the app signs in (the auth service's gRPC address, such as
+  // "http://localhost:8081"). Empty: no accounts; play as a guest.
+  string auth_url = 6;
+  // Where the app reads the player's game history (the history service's
+  // gRPC address). Empty: no history on this server.
+  string history_url = 7;
+}
+
+enum ClientStatus {
+  // A status added later reads as OUTDATED in older apps: they keep working
+  // and suggest an update, rather than locking people out.
+  CLIENT_STATUS_UNSPECIFIED = 0;
+  CLIENT_STATUS_SUPPORTED = 1;
+  // May play; a newer version exists.
+  CLIENT_STATUS_OUTDATED = 2;
+  // Must update before connecting.
+  CLIENT_STATUS_UNSUPPORTED = 3;
+}
