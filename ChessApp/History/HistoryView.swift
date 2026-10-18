@@ -3,8 +3,16 @@ import ChessCore
 import ChessNet
 import SwiftUI
 
+#if os(iOS)
+    import UIKit
+#else
+    import AppKit
+#endif
+
 /// The player's finished games: totals on top, then the games, newest first,
 /// loaded a page at a time as the list scrolls. A game opens for replaying.
+/// A search field finds games by the opponent's name, and a menu in the
+/// toolbar narrows them by outcome and time control.
 ///
 /// The detail column of the lobby's split view (see `LobbyView`), not a sheet:
 /// beside the lobby on a wide screen, pushed over it on a narrow one. Its own
@@ -12,6 +20,13 @@ import SwiftUI
 /// detail column with drill-down.
 struct HistoryView: View {
     @Environment(GameModel.self) private var model
+    /// The search field as typed. It becomes the filter's opponent 300 ms
+    /// after the last keystroke, so typing a name asks the server once, not
+    /// once per letter.
+    @State private var searchText = ""
+
+    /// How long typing has to pause before the search is sent.
+    private static let searchDelay: Duration = .milliseconds(300)
 
     var body: some View {
         let history = model.history
@@ -51,21 +66,118 @@ struct HistoryView: View {
             }
             .overlay {
                 if history.entries.isEmpty, !history.isLoading, history.errorMessage == nil {
-                    ContentUnavailableView(
-                        "No games yet", systemImage: "clock.arrow.circlepath",
-                        description: Text("Finished games appear here."))
+                    if history.filter.isActive {
+                        ContentUnavailableView {
+                            Label("No games match", systemImage: "magnifyingglass")
+                        } description: {
+                            Text("Try another name, outcome or time control.")
+                        } actions: {
+                            Button("Reset filters") { apply(.all) }
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "No games yet", systemImage: "clock.arrow.circlepath",
+                            description: Text("Finished games appear here."))
+                    }
                 }
             }
             .navigationTitle("Game history")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
+            .searchable(text: $searchText, prompt: Text("Opponent"))
+            .task(id: searchText) {
+                let opponent = HistoryFilter(opponent: searchText).opponent
+                guard opponent != history.filter.opponent else { return }
+                // A new keystroke cancels this task, and the sleep with it.
+                guard (try? await Task.sleep(for: Self.searchDelay)) != nil else { return }
+                var filter = history.filter
+                filter.opponent = opponent
+                await history.setFilter(filter)
+            }
+            // The view is made anew each time the lobby shows it: show the filter the list has.
+            .onAppear { searchText = history.filter.opponent }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    HistoryFilterMenu(filter: history.filter, timeControls: model.timeControls, apply: apply)
+                }
+            }
             .navigationDestination(for: String.self) { id in
                 GameReplayView(gameID: id)
             }
             .refreshable { await history.reload() }
             // Every time the lobby shows it, so a game just finished is already listed.
             .task { await history.reload() }
+        }
+    }
+
+    /// Shows the games `filter` lets through, from the first page. The search
+    /// field follows when the filter's opponent changes from here (a reset).
+    private func apply(_ filter: HistoryFilter) {
+        if filter.opponent != HistoryFilter(opponent: searchText).opponent {
+            searchText = filter.opponent
+        }
+        let history = model.history
+        Task { await history.setFilter(filter) }
+    }
+}
+
+/// The toolbar's filter button: outcome and time control, each a submenu,
+/// and a reset while anything is filtered. The icon is filled while the
+/// list is filtered, so a short list does not look like a short history.
+private struct HistoryFilterMenu: View {
+    let filter: HistoryFilter
+    /// The lobby's time controls: the ones games are played with.
+    let timeControls: [TimeControl]
+    let apply: (HistoryFilter) -> Void
+
+    var body: some View {
+        Menu {
+            Picker(selection: outcome) {
+                Text("All").tag(Outcome?.none)
+                Text("Wins").tag(Outcome?.some(.win))
+                Text("Losses").tag(Outcome?.some(.loss))
+                Text("Draws").tag(Outcome?.some(.draw))
+            } label: {
+                Label("Outcome", systemImage: "flag.checkered")
+            }
+            .pickerStyle(.menu)
+            Picker(selection: timeControl) {
+                Text("All").tag(TimeControl?.none)
+                ForEach(timeControls) { Text(verbatim: $0.description).tag(TimeControl?.some($0)) }
+            } label: {
+                Label("Time control", systemImage: "clock")
+            }
+            .pickerStyle(.menu)
+            if filter.isActive {
+                Divider()
+                Button("Reset filters", systemImage: "xmark.circle") { apply(.all) }
+            }
+        } label: {
+            Label(
+                "Filter",
+                systemImage: filter.isActive
+                    ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+    }
+
+    private var outcome: Binding<Outcome?> {
+        Binding {
+            filter.outcome
+        } set: { value in
+            var next = filter
+            next.outcome = value
+            apply(next)
+        }
+    }
+
+    private var timeControl: Binding<TimeControl?> {
+        Binding {
+            filter.timeControl
+        } set: { value in
+            var next = filter
+            next.timeControl = value
+            apply(next)
         }
     }
 }
@@ -117,9 +229,14 @@ private struct HistoryRow: View {
                     .lineLimit(1)
             }
             Spacer()
-            Text(entry.finishedAt, format: .relative(presentation: .named))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 3) {
+                Text(entry.finishedAt, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let rating = entry.rating {
+                    RatingChange(change: rating.change)
+                }
+            }
         }
     }
 
@@ -128,6 +245,22 @@ private struct HistoryRow: View {
         let moves = (entry.plies + 1) / 2
         return "\(entry.timeControl) · \(entry.termination.text) · "
             + String(localized: "\(moves) moves")
+    }
+}
+
+/// "+12" in green, "−8" in red: how a rated game moved the player's rating.
+private struct RatingChange: View {
+    let change: Int
+
+    var body: some View {
+        Text(verbatim: ratingChangeText(change))
+            .font(.caption.weight(.semibold).monospacedDigit())
+            .foregroundStyle(color)
+            .accessibilityLabel(Text("Rating \(ratingChangeText(change))"))
+    }
+
+    private var color: Color {
+        change > 0 ? .green : change < 0 ? .red : .secondary
     }
 }
 
@@ -178,6 +311,10 @@ struct GameReplayView: View {
 
     @State private var game: HistoryGame?
     @State private var positions: [Position] = []
+    /// The moves in SAN ("Nf3"), as far as they replay; see `moveText`.
+    @State private var san: [String] = []
+    /// The game as PGN, for sharing and copying; nil if its moves cannot be written.
+    @State private var pgn: String?
     @State private var ply = 0
     @State private var error: String?
 
@@ -197,17 +334,51 @@ struct GameReplayView: View {
             }
         }
         // Names are not translated: verbatim, so they do not land in the String Catalog.
-        .navigationTitle(Text(verbatim: game.map { "\($0.whiteName) – \($0.blackName)" } ?? ""))
+        .navigationTitle(Text(verbatim: game.map(Self.title) ?? ""))
+        .toolbar {
+            if let game, let pgn {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    ShareLink(
+                        item: PGNFile(text: pgn, fileName: game.pgnFileName),
+                        preview: SharePreview(game.pgnFileName)
+                    ) {
+                        Label("Share PGN", systemImage: "square.and.arrow.up")
+                    }
+                    Button("Copy PGN", systemImage: "doc.on.doc") { copy(pgn) }
+                }
+            }
+        }
         .task {
             do {
                 let loaded = try await model.history.game(id: gameID)
                 positions = loaded.positions
+                // `positions` stops at a move that does not apply; so does SAN.
+                san = sanPrefix(of: loaded.moves)
+                pgn = try? loaded.pgn(site: URL(string: model.settings.serverURL)?.host() ?? "?")
                 ply = positions.count - 1  // Open on the final position.
                 game = loaded
             } catch {
                 self.error = historyErrorText(error as? HistoryError ?? .unreachable)
             }
         }
+    }
+
+    /// "alice – Bob", with the ratings before the game when it was rated:
+    /// "alice (1520) – Bob (1487)".
+    private static func title(_ game: HistoryGame) -> String {
+        func player(_ name: String, _ rating: Int?) -> String {
+            rating.map { "\(name) (\($0))" } ?? name
+        }
+        return "\(player(game.whiteName, game.whiteRatingBefore)) – \(player(game.blackName, game.blackRatingBefore))"
+    }
+
+    private func copy(_ text: String) {
+        #if os(iOS)
+            UIPasteboard.general.string = text
+        #else
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        #endif
     }
 
     /// Room the text and buttons around the board take, padding included:
@@ -282,8 +453,10 @@ struct GameReplayView: View {
         return besideBoard > stackedBoard * margin ? .beside : .stacked
     }
 
+    /// "You won · checkmate", and for a rated game how it moved your rating: "· +12".
     private func result(_ game: HistoryGame) -> some View {
-        Text(verbatim: "\(resultText(game.result, for: game.yourColor)) · \(game.termination.text)")
+        let change = game.ratingChange.map { " · \(ratingChangeText($0))" } ?? ""
+        return Text(verbatim: "\(resultText(game.result, for: game.yourColor)) · \(game.termination.text)\(change)")
             .font(.headline)
             .multilineTextAlignment(.center)
     }
@@ -310,11 +483,13 @@ struct GameReplayView: View {
         .multilineTextAlignment(.center)
     }
 
-    /// "12. Nf3" style, in UCI: "12. g1f3", or "12… g8f6" for Black.
+    /// "12. Nf3", or "12… Nf6" for Black. A move SAN could not be written
+    /// for (the rules here and the server's disagree) is shown in UCI.
     private func moveText(_ game: HistoryGame, ply: Int) -> String {
         let number = (ply + 1) / 2
         let dots = ply.isMultiple(of: 2) ? "…" : "."
-        return "\(number)\(dots) \(game.moves[ply - 1].uci)"
+        let move = ply <= san.count ? san[ply - 1] : game.moves[ply - 1].uci
+        return "\(number)\(dots) \(move)"
     }
 
     private var controls: some View {

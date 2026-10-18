@@ -20,6 +20,62 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+/// Ratings are kept per category, from the time control's estimated length:
+/// initial seconds + 40 × increment seconds (as Lichess does).
+public nonisolated enum Chess_History_V1_RatingCategory: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+
+  /// under 180 s
+  case bullet // = 1
+
+  /// 180 s to under 480 s
+  case blitz // = 2
+
+  /// 480 s to under 1500 s
+  case rapid // = 3
+
+  /// 1500 s and more
+  case classical // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .bullet
+    case 2: self = .blitz
+    case 3: self = .rapid
+    case 4: self = .classical
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .bullet: return 1
+    case .blitz: return 2
+    case .rapid: return 3
+    case .classical: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Chess_History_V1_RatingCategory] = [
+    .unspecified,
+    .bullet,
+    .blitz,
+    .rapid,
+    .classical,
+  ]
+
+}
+
 public nonisolated enum Chess_History_V1_Outcome: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
   case unspecified // = 0
@@ -137,6 +193,10 @@ public nonisolated struct Chess_History_V1_GameRecord: Sendable {
   /// Clears the value of `finishedAt`. Subsequent reads from it will return its default value.
   public mutating func clearFinishedAt() {self._finishedAt = nil}
 
+  /// Set by the game server when both players are accounts with a login
+  /// (not anonymous, not guests or bots): only such games change ratings.
+  public var rated: Bool = false
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -187,12 +247,33 @@ public nonisolated struct Chess_History_V1_ListGamesRequest: Sendable {
   /// At most this many; 0 means 20, more than 100 means 100.
   public var pageSize: Int32 = 0
 
-  /// From the previous response; empty for the first page.
+  /// From the previous response; empty for the first page. A token is only
+  /// valid with the same filters it was issued for (INVALID_ARGUMENT otherwise).
   public var pageToken: String = String()
+
+  /// Filters; unset or empty means "any". They combine with AND.
+  /// Only games with this outcome for the asking player.
+  public var outcome: Chess_History_V1_Outcome = .unspecified
+
+  /// Only games with exactly this time control.
+  public var timeControl: Chess_V1_TimeControl {
+    get {_timeControl ?? Chess_V1_TimeControl()}
+    set {_timeControl = newValue}
+  }
+  /// Returns true if `timeControl` has been explicitly set.
+  public var hasTimeControl: Bool {self._timeControl != nil}
+  /// Clears the value of `timeControl`. Subsequent reads from it will return its default value.
+  public mutating func clearTimeControl() {self._timeControl = nil}
+
+  /// Only games whose opponent's name contains this text, ignoring case
+  /// (leading and trailing spaces dropped; at most 32 characters).
+  public var opponent: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
+
+  fileprivate var _timeControl: Chess_V1_TimeControl? = nil
 }
 
 /// A game as the player who asks sees it.
@@ -239,6 +320,17 @@ public nonisolated struct Chess_History_V1_GameEntry: Sendable {
   /// Clears the value of `finishedAt`. Subsequent reads from it will return its default value.
   public mutating func clearFinishedAt() {self._finishedAt = nil}
 
+  /// Whether the game counted for ratings, and if so how it changed the
+  /// asking player's rating in its category (rounded, e.g. +12 or -8) and
+  /// what the ratings were before it (rounded).
+  public var rated: Bool = false
+
+  public var ratingChange: Int32 = 0
+
+  public var yourRatingBefore: Int32 = 0
+
+  public var opponentRatingBefore: Int32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -275,27 +367,46 @@ public nonisolated struct Chess_History_V1_GetGameRequest: Sendable {
   public init() {}
 }
 
-public nonisolated struct Chess_History_V1_GetGameResponse: Sendable {
+public nonisolated struct Chess_History_V1_GetGameResponse: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var game: Chess_History_V1_GameRecord {
-    get {_game ?? Chess_History_V1_GameRecord()}
-    set {_game = newValue}
+    get {_storage._game ?? Chess_History_V1_GameRecord()}
+    set {_uniqueStorage()._game = newValue}
   }
   /// Returns true if `game` has been explicitly set.
-  public var hasGame: Bool {self._game != nil}
+  public var hasGame: Bool {_storage._game != nil}
   /// Clears the value of `game`. Subsequent reads from it will return its default value.
-  public mutating func clearGame() {self._game = nil}
+  public mutating func clearGame() {_uniqueStorage()._game = nil}
 
-  public var yourColor: Chess_V1_Color = .unspecified
+  public var yourColor: Chess_V1_Color {
+    get {_storage._yourColor}
+    set {_uniqueStorage()._yourColor = newValue}
+  }
+
+  /// As in GameEntry: for the PGN headers (WhiteElo/BlackElo) and the replay.
+  public var whiteRatingBefore: Int32 {
+    get {_storage._whiteRatingBefore}
+    set {_uniqueStorage()._whiteRatingBefore = newValue}
+  }
+
+  public var blackRatingBefore: Int32 {
+    get {_storage._blackRatingBefore}
+    set {_uniqueStorage()._blackRatingBefore = newValue}
+  }
+
+  public var ratingChange: Int32 {
+    get {_storage._ratingChange}
+    set {_uniqueStorage()._ratingChange = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _game: Chess_History_V1_GameRecord? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct Chess_History_V1_GetSummaryRequest: Sendable {
@@ -326,9 +437,61 @@ public nonisolated struct Chess_History_V1_GetSummaryResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Chess_History_V1_GetRatingsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Chess_History_V1_Rating: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var category: Chess_History_V1_RatingCategory = .unspecified
+
+  /// Glicko-2 on the familiar scale: rating (starts at 1500), rating
+  /// deviation (starts at 350; how unsure the rating is) and volatility.
+  /// The deviation shown is as of now: it grows while the player does not play.
+  public var rating: Double = 0
+
+  public var deviation: Double = 0
+
+  public var volatility: Double = 0
+
+  public var games: Int32 = 0
+
+  /// Deviation above 110: not settled yet; the app shows "1520?".
+  public var provisional: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Chess_History_V1_GetRatingsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var ratings: [Chess_History_V1_Rating] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "chess.history.v1"
+
+nonisolated extension Chess_History_V1_RatingCategory: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0RATING_CATEGORY_UNSPECIFIED\0\u{1}RATING_CATEGORY_BULLET\0\u{1}RATING_CATEGORY_BLITZ\0\u{1}RATING_CATEGORY_RAPID\0\u{1}RATING_CATEGORY_CLASSICAL\0")
+}
 
 nonisolated extension Chess_History_V1_Outcome: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OUTCOME_UNSPECIFIED\0\u{1}OUTCOME_WIN\0\u{1}OUTCOME_LOSS\0\u{1}OUTCOME_DRAW\0")
@@ -371,7 +534,7 @@ nonisolated extension Chess_History_V1_Player: SwiftProtobuf.Message, SwiftProto
 
 nonisolated extension Chess_History_V1_GameRecord: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GameRecord"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}game_id\0\u{1}white\0\u{1}black\0\u{3}time_control\0\u{1}result\0\u{1}termination\0\u{1}moves\0\u{3}started_at\0\u{3}finished_at\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}game_id\0\u{1}white\0\u{1}black\0\u{3}time_control\0\u{1}result\0\u{1}termination\0\u{1}moves\0\u{3}started_at\0\u{3}finished_at\0\u{1}rated\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -388,6 +551,7 @@ nonisolated extension Chess_History_V1_GameRecord: SwiftProtobuf.Message, SwiftP
       case 7: try { try decoder.decodeRepeatedStringField(value: &self.moves) }()
       case 8: try { try decoder.decodeSingularMessageField(value: &self._startedAt) }()
       case 9: try { try decoder.decodeSingularMessageField(value: &self._finishedAt) }()
+      case 10: try { try decoder.decodeSingularBoolField(value: &self.rated) }()
       default: break
       }
     }
@@ -425,6 +589,9 @@ nonisolated extension Chess_History_V1_GameRecord: SwiftProtobuf.Message, SwiftP
     try { if let v = self._finishedAt {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 9)
     } }()
+    if self.rated != false {
+      try visitor.visitSingularBoolField(value: self.rated, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -438,6 +605,7 @@ nonisolated extension Chess_History_V1_GameRecord: SwiftProtobuf.Message, SwiftP
     if lhs.moves != rhs.moves {return false}
     if lhs._startedAt != rhs._startedAt {return false}
     if lhs._finishedAt != rhs._finishedAt {return false}
+    if lhs.rated != rhs.rated {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -498,7 +666,7 @@ nonisolated extension Chess_History_V1_RecordGameResponse: SwiftProtobuf.Message
 
 nonisolated extension Chess_History_V1_ListGamesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ListGamesRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}page_size\0\u{3}page_token\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}page_size\0\u{3}page_token\0\u{1}outcome\0\u{3}time_control\0\u{1}opponent\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -508,17 +676,33 @@ nonisolated extension Chess_History_V1_ListGamesRequest: SwiftProtobuf.Message, 
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularInt32Field(value: &self.pageSize) }()
       case 2: try { try decoder.decodeSingularStringField(value: &self.pageToken) }()
+      case 3: try { try decoder.decodeSingularEnumField(value: &self.outcome) }()
+      case 4: try { try decoder.decodeSingularMessageField(value: &self._timeControl) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.opponent) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if self.pageSize != 0 {
       try visitor.visitSingularInt32Field(value: self.pageSize, fieldNumber: 1)
     }
     if !self.pageToken.isEmpty {
       try visitor.visitSingularStringField(value: self.pageToken, fieldNumber: 2)
+    }
+    if self.outcome != .unspecified {
+      try visitor.visitSingularEnumField(value: self.outcome, fieldNumber: 3)
+    }
+    try { if let v = self._timeControl {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 4)
+    } }()
+    if !self.opponent.isEmpty {
+      try visitor.visitSingularStringField(value: self.opponent, fieldNumber: 5)
     }
     try unknownFields.traverse(visitor: &visitor)
   }
@@ -526,6 +710,9 @@ nonisolated extension Chess_History_V1_ListGamesRequest: SwiftProtobuf.Message, 
   public static func ==(lhs: Chess_History_V1_ListGamesRequest, rhs: Chess_History_V1_ListGamesRequest) -> Bool {
     if lhs.pageSize != rhs.pageSize {return false}
     if lhs.pageToken != rhs.pageToken {return false}
+    if lhs.outcome != rhs.outcome {return false}
+    if lhs._timeControl != rhs._timeControl {return false}
+    if lhs.opponent != rhs.opponent {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -533,7 +720,7 @@ nonisolated extension Chess_History_V1_ListGamesRequest: SwiftProtobuf.Message, 
 
 nonisolated extension Chess_History_V1_GameEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GameEntry"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}game_id\0\u{3}your_color\0\u{1}opponent\0\u{1}outcome\0\u{1}termination\0\u{3}time_control\0\u{1}plies\0\u{3}finished_at\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}game_id\0\u{3}your_color\0\u{1}opponent\0\u{1}outcome\0\u{1}termination\0\u{3}time_control\0\u{1}plies\0\u{3}finished_at\0\u{1}rated\0\u{3}rating_change\0\u{3}your_rating_before\0\u{3}opponent_rating_before\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -549,6 +736,10 @@ nonisolated extension Chess_History_V1_GameEntry: SwiftProtobuf.Message, SwiftPr
       case 6: try { try decoder.decodeSingularMessageField(value: &self._timeControl) }()
       case 7: try { try decoder.decodeSingularInt32Field(value: &self.plies) }()
       case 8: try { try decoder.decodeSingularMessageField(value: &self._finishedAt) }()
+      case 9: try { try decoder.decodeSingularBoolField(value: &self.rated) }()
+      case 10: try { try decoder.decodeSingularInt32Field(value: &self.ratingChange) }()
+      case 11: try { try decoder.decodeSingularInt32Field(value: &self.yourRatingBefore) }()
+      case 12: try { try decoder.decodeSingularInt32Field(value: &self.opponentRatingBefore) }()
       default: break
       }
     }
@@ -583,6 +774,18 @@ nonisolated extension Chess_History_V1_GameEntry: SwiftProtobuf.Message, SwiftPr
     try { if let v = self._finishedAt {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
     } }()
+    if self.rated != false {
+      try visitor.visitSingularBoolField(value: self.rated, fieldNumber: 9)
+    }
+    if self.ratingChange != 0 {
+      try visitor.visitSingularInt32Field(value: self.ratingChange, fieldNumber: 10)
+    }
+    if self.yourRatingBefore != 0 {
+      try visitor.visitSingularInt32Field(value: self.yourRatingBefore, fieldNumber: 11)
+    }
+    if self.opponentRatingBefore != 0 {
+      try visitor.visitSingularInt32Field(value: self.opponentRatingBefore, fieldNumber: 12)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -595,6 +798,10 @@ nonisolated extension Chess_History_V1_GameEntry: SwiftProtobuf.Message, SwiftPr
     if lhs._timeControl != rhs._timeControl {return false}
     if lhs.plies != rhs.plies {return false}
     if lhs._finishedAt != rhs._finishedAt {return false}
+    if lhs.rated != rhs.rated {return false}
+    if lhs.ratingChange != rhs.ratingChange {return false}
+    if lhs.yourRatingBefore != rhs.yourRatingBefore {return false}
+    if lhs.opponentRatingBefore != rhs.opponentRatingBefore {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -667,38 +874,97 @@ nonisolated extension Chess_History_V1_GetGameRequest: SwiftProtobuf.Message, Sw
 
 nonisolated extension Chess_History_V1_GetGameResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".GetGameResponse"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}game\0\u{3}your_color\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}game\0\u{3}your_color\0\u{3}white_rating_before\0\u{3}black_rating_before\0\u{3}rating_change\0")
+
+  fileprivate class _StorageClass {
+    var _game: Chess_History_V1_GameRecord? = nil
+    var _yourColor: Chess_V1_Color = .unspecified
+    var _whiteRatingBefore: Int32 = 0
+    var _blackRatingBefore: Int32 = 0
+    var _ratingChange: Int32 = 0
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _game = source._game
+      _yourColor = source._yourColor
+      _whiteRatingBefore = source._whiteRatingBefore
+      _blackRatingBefore = source._blackRatingBefore
+      _ratingChange = source._ratingChange
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._game) }()
-      case 2: try { try decoder.decodeSingularEnumField(value: &self.yourColor) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._game) }()
+        case 2: try { try decoder.decodeSingularEnumField(value: &_storage._yourColor) }()
+        case 3: try { try decoder.decodeSingularInt32Field(value: &_storage._whiteRatingBefore) }()
+        case 4: try { try decoder.decodeSingularInt32Field(value: &_storage._blackRatingBefore) }()
+        case 5: try { try decoder.decodeSingularInt32Field(value: &_storage._ratingChange) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._game {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if self.yourColor != .unspecified {
-      try visitor.visitSingularEnumField(value: self.yourColor, fieldNumber: 2)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._game {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if _storage._yourColor != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._yourColor, fieldNumber: 2)
+      }
+      if _storage._whiteRatingBefore != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._whiteRatingBefore, fieldNumber: 3)
+      }
+      if _storage._blackRatingBefore != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._blackRatingBefore, fieldNumber: 4)
+      }
+      if _storage._ratingChange != 0 {
+        try visitor.visitSingularInt32Field(value: _storage._ratingChange, fieldNumber: 5)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Chess_History_V1_GetGameResponse, rhs: Chess_History_V1_GetGameResponse) -> Bool {
-    if lhs._game != rhs._game {return false}
-    if lhs.yourColor != rhs.yourColor {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._game != rhs_storage._game {return false}
+        if _storage._yourColor != rhs_storage._yourColor {return false}
+        if _storage._whiteRatingBefore != rhs_storage._whiteRatingBefore {return false}
+        if _storage._blackRatingBefore != rhs_storage._blackRatingBefore {return false}
+        if _storage._ratingChange != rhs_storage._ratingChange {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -763,6 +1029,110 @@ nonisolated extension Chess_History_V1_GetSummaryResponse: SwiftProtobuf.Message
     if lhs.wins != rhs.wins {return false}
     if lhs.losses != rhs.losses {return false}
     if lhs.draws != rhs.draws {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Chess_History_V1_GetRatingsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetRatingsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Chess_History_V1_GetRatingsRequest, rhs: Chess_History_V1_GetRatingsRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Chess_History_V1_Rating: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".Rating"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}category\0\u{1}rating\0\u{1}deviation\0\u{1}volatility\0\u{1}games\0\u{1}provisional\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularEnumField(value: &self.category) }()
+      case 2: try { try decoder.decodeSingularDoubleField(value: &self.rating) }()
+      case 3: try { try decoder.decodeSingularDoubleField(value: &self.deviation) }()
+      case 4: try { try decoder.decodeSingularDoubleField(value: &self.volatility) }()
+      case 5: try { try decoder.decodeSingularInt32Field(value: &self.games) }()
+      case 6: try { try decoder.decodeSingularBoolField(value: &self.provisional) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.category != .unspecified {
+      try visitor.visitSingularEnumField(value: self.category, fieldNumber: 1)
+    }
+    if self.rating.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.rating, fieldNumber: 2)
+    }
+    if self.deviation.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.deviation, fieldNumber: 3)
+    }
+    if self.volatility.bitPattern != 0 {
+      try visitor.visitSingularDoubleField(value: self.volatility, fieldNumber: 4)
+    }
+    if self.games != 0 {
+      try visitor.visitSingularInt32Field(value: self.games, fieldNumber: 5)
+    }
+    if self.provisional != false {
+      try visitor.visitSingularBoolField(value: self.provisional, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Chess_History_V1_Rating, rhs: Chess_History_V1_Rating) -> Bool {
+    if lhs.category != rhs.category {return false}
+    if lhs.rating != rhs.rating {return false}
+    if lhs.deviation != rhs.deviation {return false}
+    if lhs.volatility != rhs.volatility {return false}
+    if lhs.games != rhs.games {return false}
+    if lhs.provisional != rhs.provisional {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Chess_History_V1_GetRatingsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".GetRatingsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}ratings\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.ratings) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.ratings.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.ratings, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Chess_History_V1_GetRatingsResponse, rhs: Chess_History_V1_GetRatingsResponse) -> Bool {
+    if lhs.ratings != rhs.ratings {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

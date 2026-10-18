@@ -72,12 +72,26 @@ public enum Chess_History_V1_HistoryService: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "GetRatings" metadata.
+        public enum GetRatings: Sendable {
+            /// Request type for "GetRatings".
+            public typealias Input = Chess_History_V1_GetRatingsRequest
+            /// Response type for "GetRatings".
+            public typealias Output = Chess_History_V1_GetRatingsResponse
+            /// Descriptor for "GetRatings".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "chess.history.v1.HistoryService"),
+                method: "GetRatings",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "chess.history.v1.HistoryService" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             RecordGame.descriptor,
             ListGames.descriptor,
             GetGame.descriptor,
-            GetSummary.descriptor
+            GetSummary.descriptor,
+            GetRatings.descriptor
         ]
     }
 }
@@ -204,6 +218,31 @@ extension Chess_History_V1_HistoryService {
             deserializer: some GRPCCore.MessageDeserializer<Chess_History_V1_GetSummaryResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Chess_History_V1_GetSummaryResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "GetRatings" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > The player's Glicko-2 ratings, one per category they have played rated
+        /// > games in. A category with no rated games is absent (the app shows the
+        /// > starting rating, 1500, as provisional).
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Chess_History_V1_GetRatingsRequest` message.
+        ///   - serializer: A serializer for `Chess_History_V1_GetRatingsRequest` messages.
+        ///   - deserializer: A deserializer for `Chess_History_V1_GetRatingsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func getRatings<Result>(
+            request: GRPCCore.ClientRequest<Chess_History_V1_GetRatingsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Chess_History_V1_GetRatingsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Chess_History_V1_GetRatingsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Chess_History_V1_GetRatingsResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -375,6 +414,42 @@ extension Chess_History_V1_HistoryService {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "GetRatings" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > The player's Glicko-2 ratings, one per category they have played rated
+        /// > games in. A category with no rated games is absent (the app shows the
+        /// > starting rating, 1500, as provisional).
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Chess_History_V1_GetRatingsRequest` message.
+        ///   - serializer: A serializer for `Chess_History_V1_GetRatingsRequest` messages.
+        ///   - deserializer: A deserializer for `Chess_History_V1_GetRatingsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func getRatings<Result>(
+            request: GRPCCore.ClientRequest<Chess_History_V1_GetRatingsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Chess_History_V1_GetRatingsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Chess_History_V1_GetRatingsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Chess_History_V1_GetRatingsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Chess_History_V1_HistoryService.Method.GetRatings.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -493,6 +568,37 @@ extension Chess_History_V1_HistoryService.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Chess_History_V1_GetSummaryRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Chess_History_V1_GetSummaryResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetRatings" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The player's Glicko-2 ratings, one per category they have played rated
+    /// > games in. A category with no rated games is absent (the app shows the
+    /// > starting rating, 1500, as provisional).
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Chess_History_V1_GetRatingsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getRatings<Result>(
+        request: GRPCCore.ClientRequest<Chess_History_V1_GetRatingsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Chess_History_V1_GetRatingsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.getRatings(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Chess_History_V1_GetRatingsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Chess_History_V1_GetRatingsResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -629,6 +735,41 @@ extension Chess_History_V1_HistoryService.ClientProtocol {
             metadata: metadata
         )
         return try await self.getSummary(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "GetRatings" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > The player's Glicko-2 ratings, one per category they have played rated
+    /// > games in. A category with no rated games is absent (the app shows the
+    /// > starting rating, 1500, as provisional).
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func getRatings<Result>(
+        _ message: Chess_History_V1_GetRatingsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Chess_History_V1_GetRatingsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Chess_History_V1_GetRatingsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.getRatings(
             request: request,
             options: options,
             onResponse: handleResponse

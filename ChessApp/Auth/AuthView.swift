@@ -229,7 +229,7 @@ struct LoginForm: View {
                 isWorking = false
             case .addLogin:
                 addLoginError = nil
-                do {
+                do throws(AuthError) {
                     try await model.addLogin(login: login, password: password, email: email)
                     isWorking = false
                     dismiss()  // The lobby now shows the login as the name.

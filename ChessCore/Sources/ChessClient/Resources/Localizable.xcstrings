@@ -301,6 +301,16 @@
         }
       }
     },
+    "The history server did not accept the request." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сервер истории не принял запрос."
+          }
+        }
+      }
+    },
     "The history server is not answering. Pull down to try again." : {
       "localizations" : {
         "ru" : {

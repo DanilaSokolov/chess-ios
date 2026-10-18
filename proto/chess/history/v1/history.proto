@@ -30,6 +30,20 @@ service HistoryService {
   rpc GetGame(GetGameRequest) returns (GetGameResponse);
   // Totals: games, wins, losses, draws.
   rpc GetSummary(GetSummaryRequest) returns (GetSummaryResponse);
+  // The player's Glicko-2 ratings, one per category they have played rated
+  // games in. A category with no rated games is absent (the app shows the
+  // starting rating, 1500, as provisional).
+  rpc GetRatings(GetRatingsRequest) returns (GetRatingsResponse);
+}
+
+// Ratings are kept per category, from the time control's estimated length:
+// initial seconds + 40 × increment seconds (as Lichess does).
+enum RatingCategory {
+  RATING_CATEGORY_UNSPECIFIED = 0;
+  RATING_CATEGORY_BULLET = 1;    // under 180 s
+  RATING_CATEGORY_BLITZ = 2;     // 180 s to under 480 s
+  RATING_CATEGORY_RAPID = 3;     // 480 s to under 1500 s
+  RATING_CATEGORY_CLASSICAL = 4; // 1500 s and more
 }
 
 message Player {
@@ -50,6 +64,9 @@ message GameRecord {
   repeated string moves = 7;
   google.protobuf.Timestamp started_at = 8;
   google.protobuf.Timestamp finished_at = 9;
+  // Set by the game server when both players are accounts with a login
+  // (not anonymous, not guests or bots): only such games change ratings.
+  bool rated = 10;
 }
 
 message RecordGameRequest {
@@ -61,8 +78,18 @@ message RecordGameResponse {}
 message ListGamesRequest {
   // At most this many; 0 means 20, more than 100 means 100.
   int32 page_size = 1;
-  // From the previous response; empty for the first page.
+  // From the previous response; empty for the first page. A token is only
+  // valid with the same filters it was issued for (INVALID_ARGUMENT otherwise).
   string page_token = 2;
+
+  // Filters; unset or empty means "any". They combine with AND.
+  // Only games with this outcome for the asking player.
+  Outcome outcome = 3;
+  // Only games with exactly this time control.
+  chess.v1.TimeControl time_control = 4;
+  // Only games whose opponent's name contains this text, ignoring case
+  // (leading and trailing spaces dropped; at most 32 characters).
+  string opponent = 5;
 }
 
 // A game as the player who asks sees it.
@@ -76,6 +103,13 @@ message GameEntry {
   // Half-moves played.
   int32 plies = 7;
   google.protobuf.Timestamp finished_at = 8;
+  // Whether the game counted for ratings, and if so how it changed the
+  // asking player's rating in its category (rounded, e.g. +12 or -8) and
+  // what the ratings were before it (rounded).
+  bool rated = 9;
+  int32 rating_change = 10;
+  int32 your_rating_before = 11;
+  int32 opponent_rating_before = 12;
 }
 
 enum Outcome {
@@ -98,6 +132,10 @@ message GetGameRequest {
 message GetGameResponse {
   GameRecord game = 1;
   chess.v1.Color your_color = 2;
+  // As in GameEntry: for the PGN headers (WhiteElo/BlackElo) and the replay.
+  int32 white_rating_before = 3;
+  int32 black_rating_before = 4;
+  int32 rating_change = 5;
 }
 
 message GetSummaryRequest {}
@@ -107,4 +145,23 @@ message GetSummaryResponse {
   int32 wins = 2;
   int32 losses = 3;
   int32 draws = 4;
+}
+
+message GetRatingsRequest {}
+
+message Rating {
+  RatingCategory category = 1;
+  // Glicko-2 on the familiar scale: rating (starts at 1500), rating
+  // deviation (starts at 350; how unsure the rating is) and volatility.
+  // The deviation shown is as of now: it grows while the player does not play.
+  double rating = 2;
+  double deviation = 3;
+  double volatility = 4;
+  int32 games = 5;
+  // Deviation above 110: not settled yet; the app shows "1520?".
+  bool provisional = 6;
+}
+
+message GetRatingsResponse {
+  repeated Rating ratings = 1;
 }

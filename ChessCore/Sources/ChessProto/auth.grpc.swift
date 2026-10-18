@@ -229,6 +229,7 @@ extension Chess_Auth_V1_AuthService {
     /// >   ALREADY_EXISTS     EMAIL_TAKEN
     /// >   PERMISSION_DENIED  BANNED, TEMPORARILY_LOCKED (RetryInfo says how long), ACCOUNT_LOCKED
     /// >   RESOURCE_EXHAUSTED RATE_LIMITED
+    /// >   FAILED_PRECONDITION ALREADY_REGISTERED (Register with a token of an account that has a login)
     /// > 
     /// > Checking an access token is two steps. Other services check the signature
     /// > themselves (GetPublicKeys), with no call here: fast, and auth being down
@@ -266,6 +267,20 @@ extension Chess_Auth_V1_AuthService {
         /// > Source IDL Documentation:
         /// >
         /// > A new account with a login and password.
+        /// > 
+        /// > Called with "authorization: Bearer <access token>" of an anonymous
+        /// > account, it gives that account the login instead of making a new one:
+        /// > the same user_id (so its games and history stay the player's), no longer
+        /// > anonymous, shown under the login. Every session of the anonymous account
+        /// > ends (its refresh tokens are revoked) and the answer is a new session:
+        /// > the app replaces both tokens with it. Errors on top of a plain Register:
+        /// >   UNAUTHENTICATED     the token is bad, expired or its session is over (as
+        /// >                       in GetAccount): refresh, then call again; never a new
+        /// >                       account instead
+        /// >   FAILED_PRECONDITION ALREADY_REGISTERED: the account already has a login
+        /// > A taken login, bad input or the rate limit answer as for a new account,
+        /// > and leave the anonymous account as it was, still signed in.
+        /// > Without the header: a new account, as always.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Chess_Auth_V1_RegisterRequest` message.
@@ -541,6 +556,7 @@ extension Chess_Auth_V1_AuthService {
     /// >   ALREADY_EXISTS     EMAIL_TAKEN
     /// >   PERMISSION_DENIED  BANNED, TEMPORARILY_LOCKED (RetryInfo says how long), ACCOUNT_LOCKED
     /// >   RESOURCE_EXHAUSTED RATE_LIMITED
+    /// >   FAILED_PRECONDITION ALREADY_REGISTERED (Register with a token of an account that has a login)
     /// > 
     /// > Checking an access token is two steps. Other services check the signature
     /// > themselves (GetPublicKeys), with no call here: fast, and auth being down
@@ -599,6 +615,20 @@ extension Chess_Auth_V1_AuthService {
         /// > Source IDL Documentation:
         /// >
         /// > A new account with a login and password.
+        /// > 
+        /// > Called with "authorization: Bearer <access token>" of an anonymous
+        /// > account, it gives that account the login instead of making a new one:
+        /// > the same user_id (so its games and history stay the player's), no longer
+        /// > anonymous, shown under the login. Every session of the anonymous account
+        /// > ends (its refresh tokens are revoked) and the answer is a new session:
+        /// > the app replaces both tokens with it. Errors on top of a plain Register:
+        /// >   UNAUTHENTICATED     the token is bad, expired or its session is over (as
+        /// >                       in GetAccount): refresh, then call again; never a new
+        /// >                       account instead
+        /// >   FAILED_PRECONDITION ALREADY_REGISTERED: the account already has a login
+        /// > A taken login, bad input or the rate limit answer as for a new account,
+        /// > and leave the anonymous account as it was, still signed in.
+        /// > Without the header: a new account, as always.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Chess_Auth_V1_RegisterRequest` message.
@@ -1007,6 +1037,20 @@ extension Chess_Auth_V1_AuthService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > A new account with a login and password.
+    /// > 
+    /// > Called with "authorization: Bearer <access token>" of an anonymous
+    /// > account, it gives that account the login instead of making a new one:
+    /// > the same user_id (so its games and history stay the player's), no longer
+    /// > anonymous, shown under the login. Every session of the anonymous account
+    /// > ends (its refresh tokens are revoked) and the answer is a new session:
+    /// > the app replaces both tokens with it. Errors on top of a plain Register:
+    /// >   UNAUTHENTICATED     the token is bad, expired or its session is over (as
+    /// >                       in GetAccount): refresh, then call again; never a new
+    /// >                       account instead
+    /// >   FAILED_PRECONDITION ALREADY_REGISTERED: the account already has a login
+    /// > A taken login, bad input or the rate limit answer as for a new account,
+    /// > and leave the anonymous account as it was, still signed in.
+    /// > Without the header: a new account, as always.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Chess_Auth_V1_RegisterRequest` message.
@@ -1363,6 +1407,20 @@ extension Chess_Auth_V1_AuthService.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > A new account with a login and password.
+    /// > 
+    /// > Called with "authorization: Bearer <access token>" of an anonymous
+    /// > account, it gives that account the login instead of making a new one:
+    /// > the same user_id (so its games and history stay the player's), no longer
+    /// > anonymous, shown under the login. Every session of the anonymous account
+    /// > ends (its refresh tokens are revoked) and the answer is a new session:
+    /// > the app replaces both tokens with it. Errors on top of a plain Register:
+    /// >   UNAUTHENTICATED     the token is bad, expired or its session is over (as
+    /// >                       in GetAccount): refresh, then call again; never a new
+    /// >                       account instead
+    /// >   FAILED_PRECONDITION ALREADY_REGISTERED: the account already has a login
+    /// > A taken login, bad input or the rate limit answer as for a new account,
+    /// > and leave the anonymous account as it was, still signed in.
+    /// > Without the header: a new account, as always.
     ///
     /// - Parameters:
     ///   - message: request message to send.

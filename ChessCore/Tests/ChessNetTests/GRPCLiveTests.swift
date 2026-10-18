@@ -119,6 +119,11 @@ struct HistoryLiveTests {
         #expect(summary == HistorySummary(games: 0, wins: 0, losses: 0, draws: 0))
         let page = try await history.games(pageToken: nil, pageSize: 20, accessToken: session.accessToken)
         #expect(page.entries.isEmpty && page.nextPageToken == nil)
+        let filtered = try await history.games(
+            pageToken: nil, pageSize: 20, filter: HistoryFilter(outcome: .win, opponent: "nobody"),
+            accessToken: session.accessToken)
+        #expect(filtered.entries.isEmpty)
+        #expect(try await history.ratings(accessToken: session.accessToken).isEmpty, "no rated games yet")
         await #expect(throws: HistoryError.notFound) {
             try await history.game(id: "no-such-game", accessToken: session.accessToken)
         }

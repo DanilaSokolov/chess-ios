@@ -6,18 +6,33 @@ import Testing
 
 @testable import ChessClient
 
-/// History without a server: 45 games, pages of the asked size, and a token
-/// it can be told to refuse once.
+/// History without a server: 45 games, pages of the asked size, filters, and
+/// a token it can be told to refuse once. Page tokens remember the filter
+/// they were issued for, and are refused with another one, as the server does.
 final class FakeHistory: HistoryAPI {
     let tokensSeen = Mutex<[String]>([])
     let refuseNextToken = Mutex(false)
+    /// Every page token is refused as INVALID_ARGUMENT (say, the server changed how it makes them).
+    let refusePageTokens = Mutex(false)
+    /// Every list request: its page token and filter.
+    let requests = Mutex<[(pageToken: String?, filter: HistoryFilter)]>([])
+    /// A list request with this opponent filter waits until `release()`.
+    let holdOpponent = Mutex<String?>(nil)
+    private let held = Mutex<CheckedContinuation<Void, Never>?>(nil)
+    private let holding = AsyncStream<Void>.makeStream()
+    let ratingsToReturn = Mutex<[Rating]>([])
 
+    static let total = 45
+
+    /// Outcomes go win, loss, draw; opponents Alice, Alice, Bob, Bob, Bot;
+    /// the first 30 games are 3+2, the rest 10+0.
     static func entry(_ i: Int) -> HistoryEntry {
         HistoryEntry(
-            id: "g\(i)", yourColor: i.isMultiple(of: 2) ? .white : .black, opponentName: "Bot 3+2",
-            opponentIsGuest: true, outcome: .win, termination: .checkmate,
-            timeControl: TimeControl(minutes: 3, increment: 2), plies: 4,
-            finishedAt: Date(timeIntervalSince1970: TimeInterval(1000 - i)))
+            id: "g\(i)", yourColor: i.isMultiple(of: 2) ? .white : .black,
+            opponentName: ["Alice", "Alice", "Bob", "Bob", "Bot 3+2"][i % 5],
+            opponentIsGuest: i % 5 == 4, outcome: [Outcome.win, .loss, .draw][i % 3], termination: .checkmate,
+            timeControl: i < 30 ? TimeControl(minutes: 3, increment: 2) : TimeControl(minutes: 10, increment: 0),
+            plies: 4, finishedAt: Date(timeIntervalSince1970: TimeInterval(1000 - i)))
     }
 
     private func check(_ token: String) throws(HistoryError) {
@@ -30,21 +45,67 @@ final class FakeHistory: HistoryAPI {
         }
     }
 
-    func games(pageToken: String?, pageSize: Int, accessToken: String) async throws(HistoryError) -> HistoryPage {
+    private static func key(_ filter: HistoryFilter) -> String {
+        "\(filter.outcome.map { "\($0)" } ?? "-")|\(filter.timeControl?.description ?? "-")|\(filter.opponent)"
+    }
+
+    func games(pageToken: String?, pageSize: Int, filter: HistoryFilter, accessToken: String)
+        async throws(HistoryError) -> HistoryPage
+    {
         try check(accessToken)
-        let start = Int(pageToken ?? "0") ?? 0
-        let end = min(start + pageSize, 45)
-        return HistoryPage(entries: (start..<end).map(Self.entry), nextPageToken: end < 45 ? "\(end)" : nil)
+        requests.withLock { $0.append((pageToken, filter)) }
+        if holdOpponent.withLock({ $0 }) == filter.opponent {
+            await withCheckedContinuation { continuation in
+                held.withLock { $0 = continuation }
+                holding.continuation.yield()
+            }
+        }
+        var start = 0
+        if let pageToken {
+            let parts = pageToken.split(separator: "#", omittingEmptySubsequences: false)
+            guard !refusePageTokens.withLock({ $0 }), parts.count == 2, parts[0] == Self.key(filter),
+                let offset = Int(parts[1])
+            else { throw .invalidArgument }
+            start = offset
+        }
+        let matching = (0..<Self.total).map(Self.entry).filter { entry in
+            (filter.outcome == nil || entry.outcome == filter.outcome)
+                && (filter.timeControl == nil || entry.timeControl == filter.timeControl)
+                && (filter.opponent.isEmpty || entry.opponentName.localizedCaseInsensitiveContains(filter.opponent))
+        }
+        let end = min(start + pageSize, matching.count)
+        return HistoryPage(
+            entries: Array(matching[min(start, end)..<end]),
+            nextPageToken: end < matching.count ? "\(Self.key(filter))#\(end)" : nil)
+    }
+
+    /// Returns once a held request is waiting.
+    func waitUntilHeld() async {
+        var waiting = holding.stream.makeAsyncIterator()
+        _ = await waiting.next()
+    }
+
+    /// Lets the held request answer.
+    func release() {
+        held.withLock {
+            $0?.resume()
+            $0 = nil
+        }
     }
 
     func summary(accessToken: String) async throws(HistoryError) -> HistorySummary {
         try check(accessToken)
-        return HistorySummary(games: 45, wins: 45, losses: 0, draws: 0)
+        return HistorySummary(games: 45, wins: 15, losses: 15, draws: 15)
     }
 
     func game(id: String, accessToken: String) async throws(HistoryError) -> HistoryGame {
         try check(accessToken)
         throw .notFound
+    }
+
+    func ratings(accessToken: String) async throws(HistoryError) -> [Rating] {
+        try check(accessToken)
+        return ratingsToReturn.withLock { $0 }
     }
 }
 
@@ -116,5 +177,124 @@ struct GameHistoryTests {
         #expect(positions.count == 5)
         #expect(positions[0] == .starting)
         #expect(positions[4].status == .checkmate(winner: .black), "fool's mate")
+    }
+
+    // MARK: - Filters
+
+    @Test func changingTheFilterStartsFromTheFirstPage() async throws {
+        let fake = FakeHistory()
+        let history = GameHistory(accounts: try await signedIn())
+        history.client = fake
+        await history.reload()
+        await history.loadMore()
+        #expect(history.entries.count == 40 && history.hasMore)
+
+        await history.setFilter(HistoryFilter(outcome: .win))
+        let last = try #require(fake.requests.withLock { $0.last })
+        #expect(last.pageToken == nil, "the old token belongs to the old filter")
+        #expect(last.filter.outcome == .win)
+        #expect(history.entries.count == 15 && !history.hasMore)
+        #expect(history.entries.allSatisfy { $0.outcome == .win })
+        #expect(history.filter.isActive)
+
+        // Filters combine: wins against Bob in 3+2.
+        await history.setFilter(
+            HistoryFilter(outcome: .win, timeControl: TimeControl(minutes: 3, increment: 2), opponent: "  bob "))
+        #expect(history.filter.opponent == "bob", "spaces dropped")
+        #expect(!history.entries.isEmpty)
+        #expect(
+            history.entries.allSatisfy {
+                $0.outcome == .win && $0.opponentName == "Bob" && $0.timeControl.description == "3+2"
+            })
+
+        // The same filter again: nothing is asked.
+        let asked = fake.requests.withLock { $0.count }
+        await history.setFilter(history.filter)
+        #expect(fake.requests.withLock { $0.count } == asked)
+
+        await history.setFilter(.all)
+        #expect(history.entries.count == 20 && !history.filter.isActive)
+    }
+
+    @Test func pagingWithAFilterKeepsTheFilter() async throws {
+        let fake = FakeHistory()
+        let history = GameHistory(accounts: try await signedIn())
+        history.client = fake
+        await history.setFilter(HistoryFilter(opponent: "ali"))  // 18 of the 45 games.
+        #expect(history.entries.count == 18 && !history.hasMore)
+        await history.setFilter(HistoryFilter(timeControl: TimeControl(minutes: 3, increment: 2)))  // 30 games.
+        #expect(history.entries.count == 20 && history.hasMore)
+        await history.loadMore()
+        #expect(history.entries.count == 30 && !history.hasMore)
+        #expect(history.errorMessage == nil, "the token came with the same filter")
+        #expect(fake.requests.withLock { $0.last?.filter.timeControl } == TimeControl(minutes: 3, increment: 2))
+    }
+
+    /// The opponent field changed while the list for the old text was on its
+    /// way: that answer arrives last but must not replace the newer list.
+    @Test func staleAnswerIsIgnored() async throws {
+        let fake = FakeHistory()
+        let history = GameHistory(accounts: try await signedIn())
+        history.client = fake
+        fake.holdOpponent.withLock { $0 = "bot" }
+        let slow = Task { await history.setFilter(HistoryFilter(opponent: "bot")) }
+        await fake.waitUntilHeld()
+        #expect(history.isLoading)
+
+        await history.setFilter(HistoryFilter(opponent: "alice"))
+        #expect(history.entries.count == 18 && !history.isLoading)
+
+        fake.release()
+        await slow.value
+        #expect(history.filter.opponent == "alice")
+        #expect(history.entries.count == 18, "the list for \"bot\" was dropped")
+        #expect(history.entries.allSatisfy { $0.opponentName == "Alice" })
+        #expect(!history.isLoading)
+    }
+
+    @Test func refusedPageTokenReloadsFromTheStart() async throws {
+        let fake = FakeHistory()
+        let history = GameHistory(accounts: try await signedIn())
+        history.client = fake
+        await history.reload()
+        #expect(history.entries.count == 20)
+        fake.refusePageTokens.withLock { $0 = true }
+        await history.loadMore()
+        let requests = fake.requests.withLock { $0 }
+        #expect(requests.count == 3, "first page, refused page, first page again")
+        #expect(requests[1].pageToken != nil && requests[2].pageToken == nil)
+        #expect(history.errorMessage == nil, "not an error for the player")
+        #expect(history.entries.count == 20 && history.hasMore)
+        #expect(Set(history.entries.map(\.id)).count == 20, "no game twice")
+    }
+
+    @Test func opponentFilterIsCutToTheServersLimit() {
+        let filter = HistoryFilter(opponent: String(repeating: "a", count: 40))
+        #expect(filter.opponent.count == HistoryFilter.maxOpponentLength)
+        #expect(HistoryFilter(outcome: .unknown) == .all, "unknown is no outcome filter")
+    }
+
+    // MARK: - Ratings
+
+    @Test func ratingsAreReadByCategory() async throws {
+        let fake = FakeHistory()
+        let history = GameHistory(accounts: try await signedIn())
+        history.client = fake
+        fake.ratingsToReturn.withLock {
+            $0 = [
+                Rating(
+                    category: .blitz, rating: 1520.4, deviation: 80, volatility: 0.06, games: 30, isProvisional: false),
+                Rating(
+                    category: .rapid, rating: 1487.6, deviation: 160, volatility: 0.06, games: 2, isProvisional: true),
+            ]
+        }
+        await history.refreshRatings()
+        #expect(ratingText(history.rating(for: .blitz)) == "1520")
+        #expect(ratingText(history.rating(for: .rapid)) == "1488?")
+        #expect(history.rating(for: .bullet) == nil)
+        #expect(ratingText(history.rating(for: .bullet)) == "1500?", "not played yet: the starting rating")
+
+        history.reset()
+        #expect(history.ratings.isEmpty && history.entries.isEmpty)
     }
 }

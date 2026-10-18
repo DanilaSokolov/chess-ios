@@ -4,7 +4,8 @@ import Foundation
 import Observation
 
 /// The player's finished games, for the history screen: a list read a page at
-/// a time, totals, and single games for replaying.
+/// a time (only the games the filter lets through), totals, single games for
+/// replaying, and the player's ratings.
 @MainActor
 @Observable
 public final class GameHistory {
@@ -15,6 +16,11 @@ public final class GameHistory {
     public private(set) var hasMore = false
     /// Why the last load failed, in the player's language.
     public private(set) var errorMessage: String?
+    /// Which games the list shows; change it with `setFilter(_:)`.
+    public private(set) var filter = HistoryFilter.all
+    /// The player's ratings by category; a category without rated games is
+    /// absent (show it as 1500, provisional: see `ratingText`).
+    public private(set) var ratings: [RatingCategory: Rating] = [:]
 
     /// The history service, at the address from the server's bootstrap. Nil:
     /// the server keeps no history.
@@ -22,6 +28,10 @@ public final class GameHistory {
 
     @ObservationIgnored private let accounts: AccountManager
     @ObservationIgnored private var nextPageToken: String?
+    /// Counts list loads. A load that finds a newer number when its answer
+    /// arrives was overtaken (the filter changed, or the list was reloaded)
+    /// and its answer is dropped: it belongs to a list no longer on screen.
+    @ObservationIgnored private var generation = 0
     static let pageSize = 20
 
     public init(accounts: AccountManager) {
@@ -31,48 +41,113 @@ public final class GameHistory {
     /// History is kept for accounts only: a guest has nobody to keep it for.
     public var isAvailable: Bool { client != nil && accounts.hasAccount }
 
-    /// The first page and the totals, from scratch: on opening the screen and
-    /// on pull to refresh.
+    /// The first page and the totals, from scratch: on opening the screen,
+    /// on pull to refresh, and when the filter changes. Starts over even if a
+    /// load is under way; that load's answer is then ignored.
     public func reload() async {
-        guard !isLoading else { return }
+        generation += 1
+        let current = generation
+        let filter = self.filter
         isLoading = true
-        defer { isLoading = false }
         errorMessage = nil
+        let result: Result<(HistoryPage, HistorySummary), HistoryError>
         do {
             async let page = authorized { client, token throws(HistoryError) in
-                try await client.games(pageToken: nil, pageSize: Self.pageSize, accessToken: token)
+                try await client.games(pageToken: nil, pageSize: Self.pageSize, filter: filter, accessToken: token)
             }
             async let totals = authorized { client, token throws(HistoryError) in
                 try await client.summary(accessToken: token)
             }
             let (first, sum) = try await (page, totals)
+            result = .success((first, sum))
+        } catch {
+            result = .failure(error as? HistoryError ?? .unreachable)
+        }
+        guard current == generation else { return }  // Overtaken: a newer load owns the list.
+        isLoading = false
+        switch result {
+        case .success(let (first, sum)):
             entries = first.entries
             nextPageToken = first.nextPageToken
             hasMore = first.nextPageToken != nil
             summary = sum
-        } catch {
-            errorMessage = historyErrorText(error as? HistoryError ?? .unreachable)
+        case .failure(let error):
+            errorMessage = historyErrorText(error)
         }
     }
 
     /// The next page, when the list is scrolled to its end.
     public func loadMore() async {
         guard !isLoading, let token = nextPageToken else { return }
+        let current = generation
+        let filter = self.filter
         isLoading = true
-        defer { isLoading = false }
+        let result: Result<HistoryPage, HistoryError>
         do {
             let page = try await authorized { client, access throws(HistoryError) in
-                try await client.games(pageToken: token, pageSize: Self.pageSize, accessToken: access)
+                try await client.games(pageToken: token, pageSize: Self.pageSize, filter: filter, accessToken: access)
             }
+            result = .success(page)
+        } catch {
+            result = .failure(error)
+        }
+        guard current == generation else { return }  // The filter changed meanwhile: not this list's page.
+        isLoading = false
+        switch result {
+        case .success(let page):
             // The server's paging never repeats a game; this guards against a
             // double tap loading the same page twice.
             let known = Set(entries.map(\.id))
             entries += page.entries.filter { !known.contains($0.id) }
             nextPageToken = page.nextPageToken
             hasMore = page.nextPageToken != nil
-        } catch {
+        case .failure(.invalidArgument):
+            // The server no longer takes the token (it is only good with the
+            // filters it was issued for): read the list again from the start.
+            await reload()
+        case .failure(let error):
             errorMessage = historyErrorText(error)
         }
+    }
+
+    /// Shows only the games `filter` lets through, from the first page: the
+    /// old page token belongs to the old filter. Nothing happens if the
+    /// filter is the same.
+    public func setFilter(_ filter: HistoryFilter) async {
+        guard filter != self.filter else { return }
+        self.filter = filter
+        entries = []
+        nextPageToken = nil
+        hasMore = false
+        await reload()
+    }
+
+    /// Reads the player's ratings again: when the lobby appears and after a
+    /// game. If history does not answer, the ratings already shown stay.
+    public func refreshRatings() async {
+        guard let list = try? await authorized({ client, token throws(HistoryError) in
+            try await client.ratings(accessToken: token)
+        }) else { return }
+        ratings = Dictionary(list.map { ($0.category, $0) }, uniquingKeysWith: { _, last in last })
+    }
+
+    /// The rating in `category`; nil when the player has no rated games there.
+    public func rating(for category: RatingCategory) -> Rating? {
+        ratings[category]
+    }
+
+    /// Forgets everything read for the account: on signing out, so the next
+    /// player does not see the last one's games or ratings.
+    public func reset() {
+        generation += 1
+        entries = []
+        summary = nil
+        isLoading = false
+        hasMore = false
+        errorMessage = nil
+        filter = .all
+        ratings = [:]
+        nextPageToken = nil
     }
 
     /// One game with its moves.
@@ -114,6 +189,8 @@ public func historyErrorText(_ error: HistoryError) -> String {
         String(localized: "Sign in to see your games.", bundle: .module)
     case .notFound:
         String(localized: "This game is not in your history.", bundle: .module)
+    case .invalidArgument:
+        String(localized: "The history server did not accept the request.", bundle: .module)
     case .failed(let reason):
         String(localized: "Could not load the history (\(reason)).", bundle: .module)
     }

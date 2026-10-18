@@ -178,6 +178,22 @@ final class GameModel {
         settings.account = nil
         displayName = nil
         state = ClientState()
+        history.reset()
+    }
+
+    // MARK: - Ratings
+
+    /// Ratings are kept for accounts with a login: only their games are
+    /// rated, so an anonymous player has none to show.
+    var showsRatings: Bool {
+        settings.account == .login && history.isAvailable
+    }
+
+    /// Reads the ratings again, for players who have them: when the lobby
+    /// appears and after a game.
+    func refreshRatings() async {
+        guard showsRatings else { return }
+        await history.refreshRatings()
     }
 
     // MARK: - Lobby
@@ -477,7 +493,22 @@ extension GameModel: ConnectionManagerDelegate {
             accounts.dropAccessToken()
         }
         endMoveInterval(on: event)
+        let wasInProgress = state.isGameInProgress
         state.apply(event, now: .now)
+        if case .gameOver = event, wasInProgress, !state.isGameInProgress {
+            refreshRatingsAfterGame()
+        }
+    }
+
+    /// The game server hands a finished game to history through its outbox,
+    /// so the new rating is there a moment after GameOver, not at once. Asks
+    /// shortly after; the lobby asks again when it appears.
+    private func refreshRatingsAfterGame() {
+        guard showsRatings else { return }
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            await refreshRatings()
+        }
     }
 
     /// Closes the "Move" interval when the server answers our move.

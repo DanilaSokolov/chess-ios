@@ -35,6 +35,8 @@ public nonisolated struct Chess_Auth_V1_SignUpAnonymouslyRequest: Sendable {
   public init() {}
 }
 
+/// The same request makes a new account or upgrades an anonymous one: see
+/// Register.
 public nonisolated struct Chess_Auth_V1_RegisterRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for

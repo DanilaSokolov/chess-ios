@@ -48,6 +48,9 @@ struct LobbyView: View {
         .navigationSplitViewStyle(.balanced)
         // Restarts the polling, with a fresh check, whenever the address changes.
         .task(id: model.settings.serverURL) { await model.monitorHealth() }
+        // Whenever the lobby appears (a game just changed them) and when the
+        // player gets a login.
+        .task(id: model.showsRatings) { await model.refreshRatings() }
         .sheet(isPresented: $showsEmail) {
             EmailView()
                 #if os(macOS)
@@ -132,12 +135,34 @@ struct LobbyView: View {
                     Spacer()
                     Button("Leave") { Task { await model.signOut() } }
                 }
+                if model.showsRatings {
+                    RatingsLine(
+                        ratings: model.history.ratings,
+                        categories: RatingCategory.categories(of: model.timeControls),
+                        selected: model.timeControl.ratingCategory)
+                }
                 if model.canAddLogin {
                     Button {
                         showsAddLogin = true
                     } label: {
-                        Label("Create a login", systemImage: "person.badge.key")
+                        Label {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Create a login")
+                                // Where ratings are kept at all: the hint leads to the login that gives one.
+                                if model.history.isAvailable {
+                                    Text("Ratings need a login")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        } icon: {
+                            Image(systemName: "person.badge.key")
+                        }
                     }
+                } else if model.settings.account == .anonymous, model.history.isAvailable {
+                    Text("Ratings need a login")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 if model.settings.account == .login {
                     Button {
